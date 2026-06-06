@@ -7,7 +7,12 @@ interface STTService {
 }
 
 export function createSTT(mode: 'local' | 'cloud', apiKey: string, dataDir: string, model: string): STTService {
-  return mode === 'local' ? new LocalWhisper(dataDir, model) : new CloudWhisper(apiKey)
+  // Prefer cloud if OPENAI_API_KEY is available
+  const openaiKey = process.env.OPENAI_API_KEY || apiKey
+  if (mode === 'cloud' || (!apiKey && openaiKey)) {
+    return new CloudWhisper(openaiKey)
+  }
+  return new LocalWhisper(dataDir, model)
 }
 
 class LocalWhisper implements STTService {

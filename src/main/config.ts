@@ -16,7 +16,7 @@ export interface Config {
 
   // STT
   sttMode: 'local' | 'cloud'
-  whisperModel: 'tiny' | 'base'
+  whisperModel: 'tiny' | 'base' | 'medium' | 'large-v3' | 'large-v3-turbo'
 
   // Input
   longPressDuration: number
@@ -54,8 +54,8 @@ export function loadConfig(): Config {
     codexPath:       e.CODEX_PATH || '',
     opencodePath:    e.OPENCODE_PATH || '',
 
-    sttMode:         (e.STT_MODE as 'local' | 'cloud') || 'local',
-    whisperModel:    (e.WHISPER_MODEL as 'tiny' | 'base') || 'base',
+    sttMode:         (e.STT_MODE as 'local' | 'cloud') || 'cloud',
+    whisperModel:    (e.WHISPER_MODEL as any) || 'large-v3-turbo',
 
     longPressDuration: parseInt(e.LONG_PRESS_DURATION || '800'),
     dragThresholdPx:   parseInt(e.DRAG_THRESHOLD_PX || '15'),
