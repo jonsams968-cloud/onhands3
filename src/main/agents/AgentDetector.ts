@@ -52,7 +52,16 @@ export class AgentDetector {
       if (envPath) return envPath
 
       // `where` on Windows returns full path(s)
-      const result = execFileSync('where', [name], { encoding: 'utf-8', timeout: 3000 }).trim()
+      // Use 'buffer' encoding to avoid GBK→UTF-8 mojibake on Chinese Windows,
+      // then manually decode as UTF-8 (where.exe outputs ASCII paths when found)
+      const buf = execFileSync('where', [name], {
+        timeout: 3000,
+        encoding: 'buffer',
+        stdio: ['pipe', 'pipe', 'pipe'],   // Fully pipe to prevent GBK leaking to console
+        windowsHide: true,
+      }) as Buffer
+
+      const result = buf.toString('utf-8').trim()
       if (!result) return null
 
       // Take first result, prefer .cmd on Windows
