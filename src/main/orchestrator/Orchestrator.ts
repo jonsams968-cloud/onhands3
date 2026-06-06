@@ -1,4 +1,5 @@
 import { BrowserWindow, screen, ipcMain } from 'electron'
+import { ChildProcess } from 'child_process'
 import { MouseMonitor } from '../input/MouseMonitor'
 import { ContextCollector } from '../context/ContextCollector'
 import { Router } from '../ai/Router'
@@ -22,6 +23,7 @@ export class Orchestrator {
   private pendingPosition = { x: 0, y: 0 }
   private pendingWindow: DesktopContext['activeWindow'] = null
   private stt: any = null
+  private currentAgentProcess: ChildProcess | null = null
 
   constructor(win: BrowserWindow, mouse: MouseMonitor) {
     this.win = win
@@ -68,7 +70,12 @@ export class Orchestrator {
     })
 
     this.mouse.on('longpressend', () => {
-      // Don't send processing here — wait for voice recording to complete
+      // Transition away from 'recording' so useVoiceRecorder stops the mic.
+      // After recording stops, the onstop callback will invoke voice:recording
+      // which calls processVoice() and sets state to 'processing'.
+      if (!this.isProcessing) {
+        this.sendState('transcribed', '')
+      }
     })
 
     // IPC: audio from renderer
@@ -89,7 +96,7 @@ export class Orchestrator {
 
     // IPC: abort
     ipcMain.handle('action:abort', async () => {
-      // TODO: kill running agent process
+      this.abort()
     })
 
     console.log('[orchestrator] Ready')
@@ -195,6 +202,9 @@ export class Orchestrator {
     const session = await this.agent.execute(prompt, {
       workingDirectory: context.workingDirectory,
       timeoutMs: 120_000,
+      onProcessSpawn: (proc) => {
+        this.currentAgentProcess = proc
+      },
       onPermissionRequest: async (req) => {
         return this.requestPermission(req)
       },
@@ -334,5 +344,22 @@ export class Orchestrator {
     this.pendingPermissions.delete(id)
     console.log(`[permission] ${id}: ${approved ? 'approved' : 'denied'}`)
     pending.resolve(approved)
+  }
+
+  /** Abort the current agent/processing operation */
+  abort(): void {
+    if (this.currentAgentProcess) {
+      console.log('[orchestrator] Aborting agent process')
+      try { this.currentAgentProcess.kill('SIGTERM') } catch {}
+      this.currentAgentProcess = null
+    }
+    this.isProcessing = false
+    this.pendingAudio = null
+    this.sendState('hidden')
+  }
+
+  /** Register a running agent subprocess so it can be killed on abort */
+  setAgentProcess(proc: ChildProcess | null): void {
+    this.currentAgentProcess = proc
   }
 }

@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'child_process'
 import type { AgentInfo, AgentSession } from '../../shared/types'
 
 /**
@@ -23,4 +24,6 @@ export interface AgentExecOptions {
   onOutput?: (chunk: string) => void
   /** Called when the agent needs permission to use a tool. Return true to approve. */
   onPermissionRequest?: (req: PermissionRequest) => Promise<boolean>
+  /** Called when the agent subprocess is spawned, so callers can track it for abort. */
+  onProcessSpawn?: (proc: ChildProcess) => void
 }

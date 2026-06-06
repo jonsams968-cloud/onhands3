@@ -383,6 +383,85 @@
   animation: result-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Markdown elements inside result-text */
+.result-text .md-code-block {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.result-text .md-inline-code {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #a5f3fc;
+}
+
+.result-text strong {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.result-text em {
+  color: #c4b5fd;
+  font-style: italic;
+}
+
+.result-text .md-h2,
+.result-text .md-h3,
+.result-text .md-h4 {
+  color: #f1f5f9;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.result-text .md-h2 { font-size: 14px; }
+.result-text .md-h3 { font-size: 13px; }
+.result-text .md-h4 { font-size: 12px; }
+
+.result-text .md-link {
+  color: var(--accent-light);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.result-text .md-link:hover {
+  color: #c7d2fe;
+}
+
+.result-text .md-ul {
+  list-style: none;
+  padding-left: 14px;
+  margin: 4px 0;
+}
+
+.result-text .md-li {
+  position: relative;
+  padding-left: 10px;
+  margin: 2px 0;
+}
+
+.result-text .md-li::before {
+  content: '\2022';
+  position: absolute;
+  left: 0;
+  color: var(--accent-light);
+}
+
+.result-text .md-li--ordered::before {
+  content: counter(list-item) '.';
+  color: var(--accent-light);
+}
+
 @keyframes result-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -412,6 +491,28 @@
 
 .text-input::placeholder {
   color: var(--text-muted);
+}
+
+/* ─── Abort Button ─── */
+
+.abort-btn {
+  padding: 3px 12px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+  transition: all 0.15s ease;
+  font-family: var(--font-sans);
+}
+
+.abort-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
 }
 
 /* ─── Utility ─── */

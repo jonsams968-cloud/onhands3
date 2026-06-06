@@ -41,6 +41,9 @@ export class ClaudeCodeAgent implements Agent {
           windowsHide: true,
           shell: true,     // Required for .cmd files on Windows
         })
+
+        // Notify caller so it can track the process for abort
+        opts?.onProcessSpawn?.(proc as import('child_process').ChildProcess)
       } catch (err: any) {
         console.error(`[agent] Spawn failed: ${err.message}`)
         resolve({ output: '', error: `Spawn failed: ${err.message}`, exitCode: null, durationMs: Date.now() - startTime })

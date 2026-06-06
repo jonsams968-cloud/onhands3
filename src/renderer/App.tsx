@@ -243,6 +243,12 @@ export default function App() {
               <span className="label-muted">
                 {routeMode === 'agent' ? 'Agent 执行中' : '处理中'}...
               </span>
+              <button
+                onClick={() => window.onhands.abortAction()}
+                className="abort-btn ml-auto"
+              >
+                终止
+              </button>
             </div>
             {streamLines.length > 0 && (
               <div className="stream-area" ref={streamRef}>
@@ -309,7 +315,7 @@ export default function App() {
                 <path d="M1 4L3.5 6.5L9 1" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
-            <p className="result-text">{message}</p>
+            <p className="result-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(message) }} />
           </div>
         )}
 
@@ -346,4 +352,48 @@ function formatStreamLine(line: string): string {
     .replace(/^Tool:\s*/, '🔧 ')
     .replace(/^Text:\s*/, '')
     .slice(0, 120)
+}
+
+/** Lightweight markdown-to-HTML converter for result text */
+function renderMarkdown(text: string): string {
+  // Escape HTML first
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+
+  // Code blocks: ```lang\n...\n```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) =>
+    `<pre class="md-code-block"><code>${code.trim()}</code></pre>`
+  )
+
+  // Inline code: `code`
+  html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>')
+
+  // Bold: **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+
+  // Italic: *text*
+  html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+
+  // Headers: ## text (at start of line)
+  html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>')
+  html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>')
+  html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>')
+
+  // Links: [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="md-link" href="$2" target="_blank" rel="noopener">$1</a>')
+
+  // Unordered lists: - item or * item
+  html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">$1</li>')
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li class="md-li">.*<\/li>\n?)+)/g, '<ul class="md-ul">$1</ul>')
+
+  // Ordered lists: 1. item
+  html = html.replace(/^\d+\. (.+)$/gm, '<li class="md-li md-li--ordered">$1</li>')
+
+  // Line breaks: preserve newlines not already inside <pre>
+  html = html.replace(/\n/g, '<br/>')
+
+  return html
 }

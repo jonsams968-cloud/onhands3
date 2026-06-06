@@ -12,10 +12,10 @@ function createWindow(): BrowserWindow {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
 
   const win = new BrowserWindow({
-    width: 600,
-    height: 260,
-    x: Math.round((sw - 600) / 2),
-    y: sh - 290,
+    width: 640,
+    height: 360,
+    x: Math.round((sw - 640) / 2),
+    y: sh - 390,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
