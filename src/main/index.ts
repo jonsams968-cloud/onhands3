@@ -18,6 +18,7 @@ function createWindow(): BrowserWindow {
     y: sh - 430,
     transparent: true,
     frame: false,
+    thickFrame: false,
     roundedCorners: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -40,6 +41,18 @@ function createWindow(): BrowserWindow {
 
   win.setIgnoreMouseEvents(true)
 
+  // Workaround for Electron bug #47946 / #39959:
+  // Windows DWM redraws white title bar on transparent frameless windows when focus changes.
+  // Fixed in Electron 37.3.1 but we're on 35.x.
+  // Approach: reset background color on blur/focus to force DWM re-composite without resizing.
+  win.setContentProtection(true)
+  const resetBg = () => {
+    if (!win || win.isDestroyed()) return
+    win.setBackgroundColor('#00000000')
+  }
+  win.on('blur', resetBg)
+  win.on('focus', resetBg)
+
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -50,9 +63,8 @@ function createWindow(): BrowserWindow {
 }
 
 // Disable Windows DWM frame drawing for truly frameless transparent windows
-app.commandLine.appendSwitch('disable-features', 'WidgetLayering')
-// Prevent Windows from adding any visual chrome/border to the window
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+// NOTE: must be a single comma-separated call — multiple appendSwitch calls with same key overwrite each other
+app.commandLine.appendSwitch('disable-features', 'WidgetLayering,CalculateNativeWinOcclusion')
 
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {

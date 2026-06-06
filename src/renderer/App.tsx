@@ -345,16 +345,38 @@ function formatStreamLine(line: string): string {
 
 function renderMarkdown(text: string): string {
   let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // Code blocks (must come before inline code)
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => `<pre class="md-code-block"><code>${code.trim()}</code></pre>`)
   html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>')
+  // Bold & italic
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+  // Headers
   html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>')
   html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>')
   html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>')
+  // Links
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="md-link" href="$2" target="_blank" rel="noopener">$1</a>')
+  // Tables: | header | header | \n |---|---| \n | cell | cell |
+  html = html.replace(/((?:^\|.+\|[ ]*\n)+)/gm, (block) => {
+    const lines = block.trim().split('\n')
+    const rows: string[] = []
+    for (const line of lines) {
+      // Skip separator line (|---|---|)
+      if (/^\|[\s\-:]+\|/.test(line)) continue
+      const cells = line.split('|').slice(1, -1).map(c => c.trim())
+      if (cells.length === 0) continue
+      const tag = rows.length === 0 ? 'th' : 'td'
+      const cellHtml = cells.map(c => `<${tag} class="md-${tag}">${c}</${tag}>`).join('')
+      rows.push(`<tr class="md-tr">${cellHtml}</tr>`)
+    }
+    if (rows.length === 0) return block
+    return `<table class="md-table"><tbody class="md-tbody">${rows.join('')}</tbody></table>`
+  })
+  // Lists
   html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">$1</li>')
   html = html.replace(/((?:<li class="md-li">.*<\/li>\n?)+)/g, '<ul class="md-ul">$1</ul>')
+  // Line breaks
   html = html.replace(/\n/g, '<br/>')
   return html
 }

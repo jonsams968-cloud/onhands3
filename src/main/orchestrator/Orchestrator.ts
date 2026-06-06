@@ -336,6 +336,15 @@ export class Orchestrator {
       parts.push(``)
     }
 
+    if (context.selectedFiles && context.selectedFiles.length > 0) {
+      parts.push(`## User Selected Files (IMPORTANT — user explicitly selected these in Explorer)`)
+      for (const f of context.selectedFiles) {
+        parts.push(`- ${f}`)
+      }
+      parts.push(`When user says "this file" or "these files" or points at something, they mean these selected files.`)
+      parts.push(``)
+    }
+
     if (context.clipboard) {
       parts.push(`## Clipboard / Selected Content`)
       parts.push(context.clipboard.slice(0, 4000))

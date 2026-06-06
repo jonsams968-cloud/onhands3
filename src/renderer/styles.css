@@ -551,6 +551,33 @@ html, body, #root {
 .result-text .md-li::before { content: '\2022'; position: absolute; left: 0; color: var(--accent-light); }
 .result-text .md-li--ordered::before { content: counter(list-item) '.'; color: var(--accent-light); }
 
+/* ─── Markdown Table ─── */
+
+.result-text .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 11px;
+}
+
+.result-text .md-th {
+  padding: 4px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.result-text .md-td {
+  padding: 3px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.result-text .md-tr:last-child .md-td {
+  border-bottom: none;
+}
+
 @keyframes result-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

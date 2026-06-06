@@ -25,6 +25,7 @@ export interface DesktopContext {
   } | null
   clipboard: string | null
   workingDirectory: string
+  selectedFiles?: string[]       // Files selected in Explorer (full paths)
 }
 
 // ─── AI / Execution ───
