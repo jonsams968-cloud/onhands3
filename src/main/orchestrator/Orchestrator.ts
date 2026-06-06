@@ -20,6 +20,7 @@ export class Orchestrator {
   private agent: Agent | null = null
   private isProcessing = false
   private isRecording = false           // Track if we're actively recording
+  private lastAbortTime = 0             // Cooldown after abort
   private pendingAudio: string | null = null
   private pendingPosition = { x: 0, y: 0 }
   private pendingWindow: DesktopContext['activeWindow'] = null
@@ -54,6 +55,7 @@ export class Orchestrator {
     // Mouse events — capture window BEFORE showing overlay
     this.mouse.on('longpress', async (e: { x: number; y: number }) => {
       if (this.isProcessing) return
+      if (Date.now() - this.lastAbortTime < 1000) return  // 1s cooldown after abort
       this.pendingPosition = { x: e.x, y: e.y }
       this.pendingAudio = null
       this.pendingWindow = null
@@ -306,8 +308,6 @@ export class Orchestrator {
     }
     if (state === 'hidden') {
       this.win.setIgnoreMouseEvents(true)
-      // Minimize before hide to prevent title bar flash on Windows
-      this.win.minimize()
       this.win.hide()
     }
 
@@ -374,6 +374,7 @@ export class Orchestrator {
     this.isProcessing = false
     this.isRecording = false
     this.pendingAudio = null
+    this.lastAbortTime = Date.now()
     this.sendState('hidden')
     console.log('[orchestrator] Abort complete — all state reset')
   }

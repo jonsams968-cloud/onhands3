@@ -25,7 +25,6 @@ function createWindow(): BrowserWindow {
     hasShadow: false,
     show: false,
     backgroundColor: '#00000000',
-    titleBarStyle: 'hidden',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
