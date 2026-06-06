@@ -51,7 +51,7 @@ export class MouseMonitor extends EventEmitter {
         }
         this.wasMouseDown = isDown
       } catch { /* poll errors are non-fatal */ }
-    }, 80)
+    }, 50)
   }
 
   async stop(): Promise<void> {

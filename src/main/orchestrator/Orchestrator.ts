@@ -84,15 +84,21 @@ export class Orchestrator {
       // Only handle if we're still in recording state (not processing/aborted)
       if (!this.isProcessing && this.isRecording) {
         this.isRecording = false
-        // Don't change state immediately — wait for voice data from renderer
-        // If no voice arrives within 2s, treat as misfire and hide
+        // Immediately transition to 'processing' — this triggers the VoiceRecorder
+        // to stop recording (useEffect detects state change from 'recording').
+        // The recorder's onstop callback will send audio via IPC.
+        // UI stays visible — no flicker between recording → processing.
+        this.sendState('processing')
+        this.streamChunk('[system] 正在处理录音...')
+
+        // Safety: if no audio arrives within 3s (recorder failed), hide
         this.misfireTimer = setTimeout(() => {
           if (!this.isProcessing && !this.pendingAudio) {
             console.log('[input] Misfire — no audio received, hiding')
             this.sendState('hidden')
           }
           this.misfireTimer = null
-        }, 2000)
+        }, 3000)
       }
     })
 
@@ -126,6 +132,7 @@ export class Orchestrator {
     if (this.isProcessing) return
     this.isProcessing = true
     this.aborted = false
+    this.sendCommandText(text)
     try {
       await this.executePipeline(text)
     } catch (err) {
@@ -145,8 +152,8 @@ export class Orchestrator {
     this.isProcessing = true
     this.aborted = false
     try {
-      // Show processing while transcribing
-      this.sendState('processing')
+      // Already in 'processing' state (set by longpressend)
+      // Just update the stream text
       this.streamChunk('[system] 语音转文字中...')
 
       const text = await this.transcribe(this.pendingAudio)
@@ -163,11 +170,11 @@ export class Orchestrator {
 
       console.log(`[voice] "${text}"`)
 
-      // Show transcribed text briefly
-      this.sendState('transcribed', text)
-      await new Promise(r => setTimeout(r, 1200))
+      // Send command text to renderer for persistent display
+      this.sendCommandText(text)
 
-      if (this.aborted) return
+      // Show recognized text briefly as a stream line (no state change, no flicker)
+      this.streamChunk(`[system] 识别结果: "${text}"`)
 
       await this.executePipeline(text)
     } catch (err) {
@@ -304,18 +311,21 @@ export class Orchestrator {
     parts.push(`Always respond in Simplified Chinese (简体中文).`)
     parts.push(``)
     parts.push(`## Rules (CRITICAL)`)
-    parts.push(`1. ALL file/system operations MUST use PowerShell via Bash tool. Format: powershell.exe -NoProfile -Command "..."`)
-    parts.push(`2. EVERY PowerShell command MUST start with this UTF-8 prefix:`)
+    parts.push(`1. Commands run through bash. Bash eats $variables. You MUST wrap PowerShell commands in SINGLE quotes to prevent bash from interpreting $:`)
+    parts.push(`   CORRECT: powershell.exe -NoProfile -Command 'Get-ChildItem | Where-Object { $_.Name -match "pattern" }'`)
+    parts.push(`   WRONG:   powershell.exe -NoProfile -Command "Get-ChildItem | Where-Object { $_.Name }"  ← bash eats $_`)
+    parts.push(`2. EVERY PowerShell command MUST include this UTF-8 prefix (inside the single quotes):`)
     parts.push(`   $OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding;`)
-    parts.push(`3. ALWAYS use INLINE PowerShell one-liners. NEVER write .ps1 script files. NEVER use the Write tool for scripts.`)
-    parts.push(`4. Use single quotes for ALL paths: 'C:\\path\\中文文件名'`)
-    parts.push(`5. ALWAYS use -LiteralPath (not -Path) for rename/move/copy operations.`)
-    parts.push(`6. Execute DIRECTLY. Do NOT ask for permission or explain what you will do.`)
-    parts.push(`7. After executing, verify the result is correct, then respond with the final outcome in Chinese.`)
+    parts.push(`3. Use double quotes for paths INSIDE the single-quoted command: powershell.exe -NoProfile -Command '... "C:\\path\\中文" ...'`)
+    parts.push(`4. ALWAYS use -LiteralPath (not -Path) for rename/move/copy with Chinese names.`)
+    parts.push(`5. NEVER write .ps1 script files. NEVER use the Write tool for scripts. Always use inline one-liners.`)
+    parts.push(`6. Execute DIRECTLY. Do NOT ask for permission.`)
+    parts.push(`7. After executing, verify the result, then respond in Chinese.`)
     parts.push(``)
-    parts.push(`## PowerShell Examples`)
-    parts.push(`Rename: powershell.exe -NoProfile -Command "$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Get-ChildItem -LiteralPath '.' | ForEach-Object { $newName = 'prefix_' + $_.Name; Rename-Item -LiteralPath $_.FullName -NewName $newName }"`)
-    parts.push(`List:   powershell.exe -NoProfile -Command "$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Get-ChildItem | Select-Object Name"`)
+    parts.push(`## Correct Examples`)
+    parts.push(`List files:  powershell.exe -NoProfile -Command '$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Get-ChildItem | Select-Object Name'`)
+    parts.push(`Rename:      powershell.exe -NoProfile -Command '$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Get-ChildItem -LiteralPath "." | ForEach-Object { $n = "01_" + $_.Name; Rename-Item -LiteralPath $_.FullName -NewName $n }'`)
+    parts.push(`Delete:      powershell.exe -NoProfile -Command '$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Remove-Item -LiteralPath "file.txt" -Force'`)
     parts.push(``)
 
     if (context.activeWindow) {
@@ -356,6 +366,8 @@ export class Orchestrator {
     if (state === 'hidden') {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
+      // Clear command text when hiding
+      this.win.webContents.send('command-text', '')
     }
 
     // ESC abort: register when active, unregister when idle
@@ -365,6 +377,10 @@ export class Orchestrator {
     } else {
       this.unregisterEscAbort()
     }
+  }
+
+  private sendCommandText(text: string): void {
+    this.win.webContents.send('command-text', text)
   }
 
   private streamChunk(chunk: string): void {

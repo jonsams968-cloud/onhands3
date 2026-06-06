@@ -7,6 +7,7 @@ declare global {
   interface Window {
     onhands: {
       onStateChanged: (cb: (state: UIState, data?: string) => void) => () => void
+      onCommandText: (cb: (text: string) => void) => () => void
       onStreamChunk: (cb: (chunk: string) => void) => () => void
       onPermissionRequest: (cb: (req: PermissionRequest) => void) => () => void
       sendRecording: (base64Audio: string) => Promise<void>
@@ -31,6 +32,7 @@ export default function App() {
   const [countdown, setCountdown] = useState(15)
   const [visible, setVisible] = useState(false)
   const [exiting, setExiting] = useState(false)
+  const [commandText, setCommandText] = useState('')
 
   const inputRef = useRef<HTMLInputElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
@@ -65,6 +67,7 @@ export default function App() {
           setStreamLines([])
           setRouteMode('')
           setPermission(null)
+          setCommandText('')
           window.onhands.setInteractive(false)
         }, 200)
         return
@@ -96,6 +99,14 @@ export default function App() {
   useEffect(() => {
     return window.onhands.onStreamChunk((chunk) => {
       setStreamLines(prev => [...prev.slice(-80), chunk])
+    })
+  }, [])
+
+  // ─── Command text (persistent across pipeline states) ───
+
+  useEffect(() => {
+    return window.onhands.onCommandText((text) => {
+      if (text) setCommandText(text)
     })
   }, [])
 
@@ -220,22 +231,26 @@ export default function App() {
 
         {/* ── Routing ── */}
         {state === 'routing' && (
-          <div className="row row--gap-md">
-            <div className="spinner" />
-            <span className="route-badge" style={{
-              background: message === 'agent' ? 'rgba(99,102,241,0.15)' : 'rgba(34,197,94,0.1)',
-              color: message === 'agent' ? '#818cf8' : '#4ade80',
-              border: `1px solid ${message === 'agent' ? 'rgba(99,102,241,0.2)' : 'rgba(34,197,94,0.15)'}`,
-            }}>
-              {message === 'agent' ? '🤖 Agent' : '⚡ 快速'}
-            </span>
-            <span className="label-muted">分析中...</span>
+          <div>
+            {commandText && <div className="command-header">{commandText}</div>}
+            <div className="row row--gap-md">
+              <div className="spinner" />
+              <span className="route-badge" style={{
+                background: message === 'agent' ? 'rgba(99,102,241,0.15)' : 'rgba(34,197,94,0.1)',
+                color: message === 'agent' ? '#818cf8' : '#4ade80',
+                border: `1px solid ${message === 'agent' ? 'rgba(99,102,241,0.2)' : 'rgba(34,197,94,0.15)'}`,
+              }}>
+                {message === 'agent' ? '🤖 Agent' : '⚡ 快速'}
+              </span>
+              <span className="label-muted">分析中...</span>
+            </div>
           </div>
         )}
 
         {/* ── Processing ── */}
         {state === 'processing' && (
           <div>
+            {commandText && <div className="command-header">{commandText}</div>}
             <div className="row row--gap-sm row--mb">
               <div className="spinner" />
               <span className="label-muted">{routeMode === 'agent' ? 'Agent 执行中' : '处理中'}...</span>
@@ -284,25 +299,31 @@ export default function App() {
 
         {/* ── Result ── */}
         {state === 'result' && (
-          <div className="row row--start row--gap-md">
+          <div>
+            {commandText && <div className="command-header command-header--done">{commandText}</div>}
+            <div className="row row--start row--gap-md">
             <div className="status-icon status-icon--success">
               <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
                 <path d="M1 4L3.5 6.5L9 1" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
             <div className="result-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(message) }} />
+            </div>
           </div>
         )}
 
         {/* ── Error ── */}
         {state === 'error' && (
-          <div className="row row--start row--gap-md">
+          <div>
+            {commandText && <div className="command-header command-header--error">{commandText}</div>}
+            <div className="row row--start row--gap-md">
             <div className="status-icon status-icon--error">
               <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                 <path d="M1 1L7 7M7 1L1 7" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </div>
             <p className="error-text">{message}</p>
+            </div>
           </div>
         )}
 

@@ -18,7 +18,6 @@ function createWindow(): BrowserWindow {
     y: sh - 430,
     transparent: true,
     frame: false,
-    thickFrame: false,
     roundedCorners: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -33,6 +32,9 @@ function createWindow(): BrowserWindow {
     },
   })
 
+  // Prevent Windows from adding any system chrome to frameless transparent window
+  win.setMenuBarVisibility(false)
+
   // Highest z-order level — always on top of everything including fullscreen apps
   win.setAlwaysOnTop(true, 'screen-saver')
 
@@ -46,6 +48,11 @@ function createWindow(): BrowserWindow {
 
   return win
 }
+
+// Disable Windows DWM frame drawing for truly frameless transparent windows
+app.commandLine.appendSwitch('disable-features', 'WidgetLayering')
+// Prevent Windows from adding any visual chrome/border to the window
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {

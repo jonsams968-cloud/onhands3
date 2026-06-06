@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('onhands', {
     ipcRenderer.on('state-changed', handler)
     return () => ipcRenderer.removeListener('state-changed', handler)
   },
+  onCommandText: (cb: (text: string) => void) => {
+    const handler = (_e: any, text: string) => cb(text)
+    ipcRenderer.on('command-text', handler)
+    return () => ipcRenderer.removeListener('command-text', handler)
+  },
   onStreamChunk: (cb: (chunk: string) => void) => {
     const handler = (_e: any, chunk: string) => cb(chunk)
     ipcRenderer.on('stream-chunk', handler)
