@@ -29,7 +29,13 @@ export class ClaudeCodeAgent implements Agent {
       try {
         proc = spawn(this.info.binaryPath, args, {
           cwd,
-          env: { ...process.env },
+          env: {
+            ...process.env,
+            // Force UTF-8 throughout the process tree (fixes Chinese path/file encoding)
+            PYTHONIOENCODING: 'utf-8',
+            LANG: 'en_US.UTF-8',
+            LESSCHARSET: 'utf-8',
+          },
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
           shell: true,     // Required for .cmd files on Windows
@@ -90,8 +96,8 @@ export class ClaudeCodeAgent implements Agent {
         }
       })
 
-      // Write prompt via stdin (plain text for -p mode)
-      proc.stdin.write(prompt)
+      // Write prompt via stdin as UTF-8
+      proc.stdin.write(Buffer.from(prompt, 'utf-8'))
       proc.stdin.end()
 
       const timeout = setTimeout(() => {

@@ -257,15 +257,17 @@ export class Orchestrator {
   private buildAgentPrompt(command: string, context: DesktopContext, resolution: string): string {
     const parts: string[] = []
 
-    parts.push(`You are OnHands, a desktop AI assistant. Execute the user's command.`)
-    parts.push(`IMPORTANT: Always respond in Simplified Chinese (简体中文).`)
+    parts.push(`You are OnHands, a desktop AI assistant running on Windows 11.`)
+    parts.push(`Always respond in Simplified Chinese (简体中文).`)
     parts.push(``)
-    parts.push(`## Rules`)
-    parts.push(`- You are on Windows. Use PowerShell commands (powershell.exe -NoProfile -Command "...") for ALL file/system operations.`)
-    parts.push(`- Do NOT use bash-only commands like ls, mv, cp, rm. Use their PowerShell equivalents (Get-ChildItem, Move-Item, Copy-Item, Remove-Item).`)
-    parts.push(`- For file paths with Chinese characters, always wrap in single quotes.`)
-    parts.push(`- Execute DIRECTLY. Do NOT ask for permission or explain what you will do. Just do it.`)
-    parts.push(`- Respond with the RESULT only, not a description of what you did.`)
+    parts.push(`## Rules (CRITICAL)`)
+    parts.push(`1. ALL file/system operations MUST use PowerShell. Format: powershell.exe -NoProfile -Command "..."`)
+    parts.push(`2. EVERY PowerShell command MUST start with: [Console]::OutputEncoding = [System.Text.Encoding]::UTF8`)
+    parts.push(`3. NEVER use bash commands (ls, mv, cp, rm, cat, mkdir). Use PowerShell equivalents (Get-ChildItem, Move-Item, Copy-Item, Remove-Item, Get-Content, New-Item).`)
+    parts.push(`4. Paths with Chinese characters MUST be wrapped in single quotes: 'C:\\Users\\Decory\\Desktop\\新建文件夹'`)
+    parts.push(`5. DO NOT verify or re-read files after creating/renaming them. Trust the command succeeded if no error. One command, done.`)
+    parts.push(`6. Execute DIRECTLY. No explanations, no asking, no verification loops. Just do it and report the result.`)
+    parts.push(`7. If a command succeeds, respond with the result IMMEDIATELY. Do NOT run extra verification commands.`)
     parts.push(``)
 
     if (context.activeWindow) {
@@ -305,6 +307,8 @@ export class Orchestrator {
     }
     if (state === 'hidden') {
       this.win.setIgnoreMouseEvents(true)
+      // Minimize before hide to prevent title bar flash on Windows
+      this.win.minimize()
       this.win.hide()
     }
 
