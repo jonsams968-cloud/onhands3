@@ -265,9 +265,8 @@ export class Orchestrator {
     parts.push(`2. EVERY PowerShell command MUST start with: [Console]::OutputEncoding = [System.Text.Encoding]::UTF8`)
     parts.push(`3. NEVER use bash commands (ls, mv, cp, rm, cat, mkdir). Use PowerShell equivalents (Get-ChildItem, Move-Item, Copy-Item, Remove-Item, Get-Content, New-Item).`)
     parts.push(`4. Paths with Chinese characters MUST be wrapped in single quotes: 'C:\\Users\\Decory\\Desktop\\新建文件夹'`)
-    parts.push(`5. DO NOT verify or re-read files after creating/renaming them. Trust the command succeeded if no error. One command, done.`)
-    parts.push(`6. Execute DIRECTLY. No explanations, no asking, no verification loops. Just do it and report the result.`)
-    parts.push(`7. If a command succeeds, respond with the result IMMEDIATELY. Do NOT run extra verification commands.`)
+    parts.push(`5. Execute DIRECTLY. Do NOT ask for permission or explain what you will do.`)
+    parts.push(`6. After executing, verify the result is correct, then respond with the final outcome in Chinese.`)
     parts.push(``)
 
     if (context.activeWindow) {
