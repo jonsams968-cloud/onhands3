@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, ipcMain } from 'electron'
+import { BrowserWindow, screen, ipcMain, globalShortcut } from 'electron'
 import { ChildProcess } from 'child_process'
 import { MouseMonitor } from '../input/MouseMonitor'
 import { ContextCollector } from '../context/ContextCollector'
@@ -19,11 +19,16 @@ export class Orchestrator {
   private agentDetector: AgentDetector
   private agent: Agent | null = null
   private isProcessing = false
+  private isRecording = false           // Track if we're actively recording
   private pendingAudio: string | null = null
   private pendingPosition = { x: 0, y: 0 }
   private pendingWindow: DesktopContext['activeWindow'] = null
   private stt: any = null
   private currentAgentProcess: ChildProcess | null = null
+
+  // Double-ESC abort tracking
+  private lastEscPress = 0
+  private escRegistered = false
 
   constructor(win: BrowserWindow, mouse: MouseMonitor) {
     this.win = win
@@ -52,6 +57,7 @@ export class Orchestrator {
       this.pendingPosition = { x: e.x, y: e.y }
       this.pendingAudio = null
       this.pendingWindow = null
+      this.isRecording = true
 
       // Hide overlay first to capture the REAL foreground window
       if (this.win.isVisible()) {
@@ -70,10 +76,10 @@ export class Orchestrator {
     })
 
     this.mouse.on('longpressend', () => {
-      // Transition away from 'recording' so useVoiceRecorder stops the mic.
-      // After recording stops, the onstop callback will invoke voice:recording
-      // which calls processVoice() and sets state to 'processing'.
-      if (!this.isProcessing) {
+      // Only transition away from recording if we ARE recording
+      // Prevents re-triggering after result/error state
+      if (!this.isProcessing && this.isRecording) {
+        this.isRecording = false
         this.sendState('transcribed', '')
       }
     })
@@ -205,9 +211,6 @@ export class Orchestrator {
       onProcessSpawn: (proc) => {
         this.currentAgentProcess = proc
       },
-      onPermissionRequest: async (req) => {
-        return this.requestPermission(req)
-      },
       onOutput: (chunk) => {
         // Parse stream-json events and send human-readable lines to renderer
         for (const line of chunk.split('\n')) {
@@ -240,6 +243,7 @@ export class Orchestrator {
       },
     })
 
+    this.currentAgentProcess = null
     console.log(`[pipeline] Agent result: exitCode=${session.exitCode}, output=${session.output?.slice(0, 100)}`)
 
     return {
@@ -298,68 +302,62 @@ export class Orchestrator {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
     }
+
+    // ESC abort: register when active, unregister when idle
+    const activeStates: UIState[] = ['recording', 'transcribed', 'routing', 'processing', 'confirm', 'input']
+    if (activeStates.includes(state)) {
+      this.registerEscAbort()
+    } else {
+      this.unregisterEscAbort()
+    }
   }
 
   private streamChunk(chunk: string): void {
     this.win.webContents.send('stream-chunk', chunk)
   }
 
-  /**
-   * Request permission from the user via the renderer UI.
-   * Returns true if approved, false if denied or timed out.
-   */
-  private pendingPermissions = new Map<string, {
-    resolve: (approved: boolean) => void
-    timer: ReturnType<typeof setTimeout>
-  }>()
-
-  private requestPermission(req: import('../agents/types').PermissionRequest): Promise<boolean> {
-    return new Promise((resolve) => {
-      // 15-second timeout — auto-deny if user doesn't respond
-      const timer = setTimeout(() => {
-        this.pendingPermissions.delete(req.id)
-        console.log(`[permission] Timeout: ${req.tool} — auto-denied`)
-        resolve(false)
-      }, 15_000)
-
-      this.pendingPermissions.set(req.id, { resolve, timer })
-
-      // Send permission request to renderer
-      this.win.webContents.send('permission-request', {
-        id: req.id,
-        tool: req.tool,
-        description: req.description,
-        detail: req.detail,
-      })
-
-      console.log(`[permission] Requested: ${req.tool} — ${req.description}`)
-    })
+  /** Handle permission answer from renderer (reserved for future use) */
+  handlePermissionAnswer(_id: string, _approved: boolean): void {
+    // Placeholder — permission system can be enhanced later
   }
 
-  /** Handle permission answer from renderer */
-  handlePermissionAnswer(id: string, approved: boolean): void {
-    const pending = this.pendingPermissions.get(id)
-    if (!pending) return
-    clearTimeout(pending.timer)
-    this.pendingPermissions.delete(id)
-    console.log(`[permission] ${id}: ${approved ? 'approved' : 'denied'}`)
-    pending.resolve(approved)
+  /** Register ESC as global shortcut for double-press abort */
+  private registerEscAbort(): void {
+    if (this.escRegistered) return
+    this.escRegistered = true
+    try {
+      globalShortcut.register('Escape', () => {
+        const now = Date.now()
+        if (now - this.lastEscPress < 500) {
+          // Double ESC — abort everything
+          this.lastEscPress = 0
+          this.abort()
+        } else {
+          this.lastEscPress = now
+        }
+      })
+    } catch { /* may fail if already registered */ }
+  }
+
+  /** Unregister ESC shortcut */
+  private unregisterEscAbort(): void {
+    if (!this.escRegistered) return
+    this.escRegistered = false
+    this.lastEscPress = 0
+    try { globalShortcut.unregister('Escape') } catch {}
   }
 
   /** Abort the current agent/processing operation */
   abort(): void {
+    this.unregisterEscAbort()
     if (this.currentAgentProcess) {
       console.log('[orchestrator] Aborting agent process')
       try { this.currentAgentProcess.kill('SIGTERM') } catch {}
       this.currentAgentProcess = null
     }
     this.isProcessing = false
+    this.isRecording = false
     this.pendingAudio = null
     this.sendState('hidden')
-  }
-
-  /** Register a running agent subprocess so it can be killed on abort */
-  setAgentProcess(proc: ChildProcess | null): void {
-    this.currentAgentProcess = proc
   }
 }

@@ -12,10 +12,10 @@ function createWindow(): BrowserWindow {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
 
   const win = new BrowserWindow({
-    width: 640,
-    height: 360,
-    x: Math.round((sw - 640) / 2),
-    y: sh - 390,
+    width: 700,
+    height: 400,
+    x: Math.round((sw - 700) / 2),
+    y: sh - 430,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -108,11 +108,6 @@ app.whenReady().then(async () => {
     lines.forEach((line, i) => {
       setTimeout(() => mainWindow?.webContents.send('stream-chunk', line), (i + 1) * 800)
     })
-  })
-  globalShortcut.register('CommandOrControl+Shift+5', () => {
-    mainWindow?.webContents.send('permission-request', { id: 'test-1', tool: 'Bash', description: '执行命令', detail: 'rm -rf /tmp/test' })
-    mainWindow?.show()
-    mainWindow?.setIgnoreMouseEvents(false)
   })
   globalShortcut.register('CommandOrControl+Shift+6', () => {
     mainWindow?.webContents.send('state-changed', 'result', '已将文件重命名为 2026-06-06')

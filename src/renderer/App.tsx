@@ -28,7 +28,7 @@ export default function App() {
   const [streamLines, setStreamLines] = useState<string[]>([])
   const [routeMode, setRouteMode] = useState<string>('')
   const [permission, setPermission] = useState<PermissionRequest | null>(null)
-  const [countdown, setCountdown] = useState(10)
+  const [countdown, setCountdown] = useState(15)
   const [visible, setVisible] = useState(false)
   const [exiting, setExiting] = useState(false)
 
@@ -36,7 +36,13 @@ export default function App() {
   const streamRef = useRef<HTMLDivElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const stateRef = useRef<UIState>('hidden')
   const prevState = useRef<UIState>('hidden')
+
+  // Keep stateRef in sync
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
 
   useVoiceRecorder(state, {
     onRecordingComplete: (base64) => window.onhands.sendRecording(base64),
@@ -50,7 +56,7 @@ export default function App() {
       if (hideTimer.current) clearTimeout(hideTimer.current)
       if (countdownRef.current) clearInterval(countdownRef.current)
 
-      prevState.current = state
+      prevState.current = stateRef.current   // Use ref, not stale closure
       setMessage(d || '')
       setState(s)
 
@@ -71,8 +77,8 @@ export default function App() {
       setExiting(false)
       window.onhands.setInteractive(true)
 
-      if (s === 'transcribed') {
-        // Brief display of transcribed text, then auto-transition is handled by main process
+      if (s === 'routing' && d) {
+        setRouteMode(d)
       }
 
       if (s === 'result' || s === 'error') {
@@ -94,7 +100,7 @@ export default function App() {
 
   useEffect(() => {
     return window.onhands.onStreamChunk((chunk) => {
-      setStreamLines(prev => [...prev.slice(-80), chunk]) // Keep last 80 lines
+      setStreamLines(prev => [...prev.slice(-80), chunk])
     })
   }, [])
 
@@ -104,7 +110,7 @@ export default function App() {
     return window.onhands.onPermissionRequest((req) => {
       setPermission(req)
       setState('confirm')
-      setCountdown(10)
+      setCountdown(15)
 
       countdownRef.current = setInterval(() => {
         setCountdown(prev => {
@@ -151,6 +157,10 @@ export default function App() {
     window.onhands.textCommand(text)
   }, [inputText])
 
+  const handleAbort = useCallback(() => {
+    window.onhands.abortAction()
+  }, [])
+
   // ─── Render ───
 
   if (!visible && !exiting) {
@@ -168,8 +178,17 @@ export default function App() {
   ].filter(Boolean).join(' ')
 
   return (
-    <div className="w-full h-full flex items-end justify-center pb-3">
+    <div className="w-full h-full flex items-center justify-center p-10">
       <div className={capsuleClass}>
+
+        {/* ── Abort button (right side, visible during processing/routing/transcribed) ── */}
+        {(state === 'processing' || state === 'routing' || state === 'transcribed') && (
+          <button onClick={handleAbort} className="abort-btn" title="终止操作 (双击ESC)">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+        )}
 
         {/* ── Recording ── */}
         {state === 'recording' && (
@@ -182,9 +201,12 @@ export default function App() {
             <span className="label-muted">正在聆听...</span>
             <button
               onClick={() => setState('input')}
-              className="ml-auto text-[11px] text-gray-500 border border-gray-700/50 rounded-lg px-2.5 py-0.5 hover:text-gray-300 hover:border-gray-600 transition-colors"
+              className="input-toggle-btn"
             >
-              ⌨ 输入
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="3" width="9" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2"/>
+                <path d="M11 5.5L13 4.5V9.5L11 8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
             </button>
           </div>
         )}
@@ -243,12 +265,6 @@ export default function App() {
               <span className="label-muted">
                 {routeMode === 'agent' ? 'Agent 执行中' : '处理中'}...
               </span>
-              <button
-                onClick={() => window.onhands.abortAction()}
-                className="abort-btn ml-auto"
-              >
-                终止
-              </button>
             </div>
             {streamLines.length > 0 && (
               <div className="stream-area" ref={streamRef}>
@@ -272,7 +288,7 @@ export default function App() {
                   className="countdown-ring__fg"
                   cx="10" cy="10" r="8"
                   strokeDasharray={`${2 * Math.PI * 8}`}
-                  strokeDashoffset={`${2 * Math.PI * 8 * (1 - countdown / 10)}`}
+                  strokeDashoffset={`${2 * Math.PI * 8 * (1 - countdown / 15)}`}
                   transform="rotate(-90 10 10)"
                 />
               </svg>
@@ -295,13 +311,13 @@ export default function App() {
                 className="confirm-btn confirm-btn--approve"
                 onClick={() => handlePermissionAnswer(true)}
               >
-                允许
+                允许本次所有操作
               </button>
               <button
                 className="confirm-btn confirm-btn--deny"
                 onClick={() => handlePermissionAnswer(false)}
               >
-                拒绝 ({countdown}s)
+                终止 ({countdown}s)
               </button>
             </div>
           </div>
@@ -315,7 +331,7 @@ export default function App() {
                 <path d="M1 4L3.5 6.5L9 1" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
-            <p className="result-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(message) }} />
+            <div className="result-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(message) }} />
           </div>
         )}
 
@@ -346,7 +362,6 @@ function getStreamLineClass(line: string): string {
 }
 
 function formatStreamLine(line: string): string {
-  // Strip internal prefixes for display
   return line
     .replace(/^\[(tool|text|system)\]\s*/, '')
     .replace(/^Tool:\s*/, '🔧 ')
@@ -356,43 +371,24 @@ function formatStreamLine(line: string): string {
 
 /** Lightweight markdown-to-HTML converter for result text */
 function renderMarkdown(text: string): string {
-  // Escape HTML first
   let html = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
 
-  // Code blocks: ```lang\n...\n```
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) =>
     `<pre class="md-code-block"><code>${code.trim()}</code></pre>`
   )
-
-  // Inline code: `code`
   html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>')
-
-  // Bold: **text**
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-
-  // Italic: *text*
   html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
-
-  // Headers: ## text (at start of line)
   html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>')
   html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>')
   html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>')
-
-  // Links: [text](url)
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="md-link" href="$2" target="_blank" rel="noopener">$1</a>')
-
-  // Unordered lists: - item or * item
   html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">$1</li>')
-  // Wrap consecutive <li> in <ul>
   html = html.replace(/((?:<li class="md-li">.*<\/li>\n?)+)/g, '<ul class="md-ul">$1</ul>')
-
-  // Ordered lists: 1. item
   html = html.replace(/^\d+\. (.+)$/gm, '<li class="md-li md-li--ordered">$1</li>')
-
-  // Line breaks: preserve newlines not already inside <pre>
   html = html.replace(/\n/g, '<br/>')
 
   return html
