@@ -1,19 +1,12 @@
 import { spawn } from 'child_process'
 import type { AgentInfo, AgentSession } from '../../shared/types'
-import type { Agent, AgentExecOptions, PermissionRequest } from './types'
-
-// Tools that are safe to auto-approve (read-only)
-const SAFE_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch']
-
-// Tools that need user approval (destructive/side-effecting)
-const DANGEROUS_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']
+import type { Agent, AgentExecOptions } from './types'
 
 /**
  * Claude Code agent backend.
  *
  * Uses `claude -p` for non-interactive execution with stream-json output.
- * Safe tools are pre-approved via --allowedTools.
- * Dangerous tools trigger permission requests through the UI.
+ * Runs with --dangerously-skip-permissions; user controls via abort button + live stream.
  */
 export class ClaudeCodeAgent implements Agent {
   readonly info: AgentInfo
@@ -54,7 +47,6 @@ export class ClaudeCodeAgent implements Agent {
       let stderr = ''
       let lastText = ''
       let eventCount = 0
-      let permissionSeq = 0
 
       proc.stdout.on('data', (chunk: Buffer) => {
         const str = chunk.toString()
@@ -77,25 +69,6 @@ export class ClaudeCodeAgent implements Agent {
                 }
                 if (b.type === 'tool_use') {
                   console.log(`[agent] Tool: ${b.name}(${JSON.stringify(b.input || {}).slice(0, 80)})`)
-
-                  // Request permission for dangerous tools
-                  if (DANGEROUS_TOOLS.includes(b.name) && opts?.onPermissionRequest) {
-                    const reqId = `perm-${++permissionSeq}-${Date.now()}`
-                    const req: PermissionRequest = {
-                      id: reqId,
-                      tool: b.name,
-                      description: this.describeToolUse(b.name, b.input),
-                      detail: JSON.stringify(b.input, null, 2).slice(0, 500),
-                    }
-                    // Fire-and-forget: send permission request to UI
-                    // If denied, the agent process will be killed
-                    opts.onPermissionRequest(req).then(approved => {
-                      if (!approved) {
-                        console.log(`[agent] Permission denied: ${b.name}, killing process`)
-                        proc.kill('SIGTERM')
-                      }
-                    })
-                  }
                 }
               }
             } else if (type === 'result') {
@@ -160,37 +133,13 @@ export class ClaudeCodeAgent implements Agent {
     })
   }
 
-  private buildArgs(opts?: AgentExecOptions): string[] {
-    const args = [
+  private buildArgs(): string[] {
+    return [
       '-p',                                   // Non-interactive print mode
       '--output-format', 'stream-json',       // Structured JSON on stdout
       '--verbose',                            // Show tool calls
+      '--dangerously-skip-permissions',       // Skip per-tool approval; user controls via abort button + live stream
     ]
-
-    // Pre-approve safe tools so Claude Code doesn't block on them
-    // Dangerous tools (Bash, Write, Edit) will be handled via permission UI
-    if (opts?.onPermissionRequest) {
-      args.push('--allowedTools', SAFE_TOOLS.join(','))
-    } else {
-      // No permission handler — allow all tools for backwards compatibility
-      args.push('--dangerously-skip-permissions')
-    }
-
-    return args
-  }
-
-  private describeToolUse(name: string, input: any): string {
-    switch (name) {
-      case 'Bash':
-        return `执行命令: ${(input?.command || '').slice(0, 100)}`
-      case 'Write':
-        return `写入文件: ${input?.file_path || '?'}`
-      case 'Edit':
-      case 'MultiEdit':
-        return `编辑文件: ${input?.file_path || '?'}`
-      default:
-        return `使用工具: ${name}`
-    }
   }
 
   private extractPlainText(stdout: string): string {
