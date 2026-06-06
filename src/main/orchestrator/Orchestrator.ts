@@ -26,6 +26,9 @@ export class Orchestrator {
   private pendingWindow: DesktopContext['activeWindow'] = null
   private stt: any = null
   private currentAgentProcess: ChildProcess | null = null
+  private misfireTimer: ReturnType<typeof setTimeout> | null = null
+  private aborted = false               // Flag to stop pipeline mid-flight
+  private fetchController: AbortController | null = null  // For DirectAI cancellation
 
   // Double-ESC abort tracking
   private lastEscPress = 0
@@ -78,16 +81,25 @@ export class Orchestrator {
     })
 
     this.mouse.on('longpressend', () => {
-      // Only transition away from recording if we ARE recording
-      // Prevents re-triggering after result/error state
+      // Only handle if we're still in recording state (not processing/aborted)
       if (!this.isProcessing && this.isRecording) {
         this.isRecording = false
-        this.sendState('transcribed', '')
+        // Don't change state immediately — wait for voice data from renderer
+        // If no voice arrives within 2s, treat as misfire and hide
+        this.misfireTimer = setTimeout(() => {
+          if (!this.isProcessing && !this.pendingAudio) {
+            console.log('[input] Misfire — no audio received, hiding')
+            this.sendState('hidden')
+          }
+          this.misfireTimer = null
+        }, 2000)
       }
     })
 
     // IPC: audio from renderer
     ipcMain.handle('voice:recording', async (_e: any, base64Audio: string) => {
+      // Clear misfire timer — voice data arrived
+      if (this.misfireTimer) { clearTimeout(this.misfireTimer); this.misfireTimer = null }
       this.pendingAudio = base64Audio
       await this.processVoice()
     })
@@ -113,10 +125,13 @@ export class Orchestrator {
   async processText(text: string): Promise<void> {
     if (this.isProcessing) return
     this.isProcessing = true
+    this.aborted = false
     try {
       await this.executePipeline(text)
     } catch (err) {
-      this.sendState('error', err instanceof Error ? err.message : 'Execution failed')
+      if (!this.aborted) {
+        this.sendState('error', err instanceof Error ? err.message : 'Execution failed')
+      }
     } finally {
       this.isProcessing = false
     }
@@ -128,6 +143,7 @@ export class Orchestrator {
       return
     }
     this.isProcessing = true
+    this.aborted = false
     try {
       // Show processing while transcribing
       this.sendState('processing')
@@ -135,7 +151,12 @@ export class Orchestrator {
 
       const text = await this.transcribe(this.pendingAudio)
       this.pendingAudio = null
+
+      // Check if aborted during transcription
+      if (this.aborted) return
+
       if (!text || text.trim().length === 0) {
+        console.log('[voice] Empty transcription — hiding')
         this.sendState('hidden')
         return
       }
@@ -144,11 +165,15 @@ export class Orchestrator {
 
       // Show transcribed text briefly
       this.sendState('transcribed', text)
-      await new Promise(r => setTimeout(r, 1500))
+      await new Promise(r => setTimeout(r, 1200))
+
+      if (this.aborted) return
 
       await this.executePipeline(text)
     } catch (err) {
-      this.sendState('error', err instanceof Error ? err.message : 'Voice processing failed')
+      if (!this.aborted) {
+        this.sendState('error', err instanceof Error ? err.message : 'Voice processing failed')
+      }
     } finally {
       this.isProcessing = false
     }
@@ -162,6 +187,8 @@ export class Orchestrator {
     this.sendState('routing', mode)
     await new Promise(r => setTimeout(r, 600))
 
+    if (this.aborted) return
+
     // Use the window captured at longpress time
     this.collector.setCapturedWindow(this.pendingWindow)
 
@@ -174,6 +201,8 @@ export class Orchestrator {
       context = { activeWindow: null, clipboard: null, workingDirectory: process.cwd() }
     }
 
+    if (this.aborted) return
+
     const display = screen.getPrimaryDisplay()
     const resolution = `${display.size.width}x${display.size.height}`
 
@@ -185,10 +214,15 @@ export class Orchestrator {
     console.log(`[pipeline] Executing via ${mode === 'agent' && this.agent ? 'agent CLI' : 'direct AI'}...`)
 
     if (mode === 'direct' || !this.agent) {
-      result = await this.directAI.execute(command, context, resolution)
+      // Create AbortController for DirectAI fetch
+      this.fetchController = new AbortController()
+      result = await this.directAI.execute(command, context, resolution, this.fetchController.signal)
+      this.fetchController = null
     } else {
       result = await this.executeViaAgent(command, context, resolution)
     }
+
+    if (this.aborted) return
 
     console.log(`[pipeline] Done: success=${result.success}, output=${result.output?.slice(0, 100)}, duration=${result.durationMs}ms`)
 
@@ -362,20 +396,39 @@ export class Orchestrator {
 
   /** Abort the current agent/processing operation — kills entire process tree */
   abort(): void {
+    console.log('[orchestrator] Abort triggered')
     this.unregisterEscAbort()
+    this.aborted = true
+
+    // Kill agent process tree
     if (this.currentAgentProcess) {
       const pid = this.currentAgentProcess.pid
-      console.log(`[orchestrator] Aborting agent process tree (pid=${pid})`)
+      console.log(`[orchestrator] Killing agent process tree (pid=${pid})`)
       try {
         if (process.platform === 'win32' && pid) {
-          // Windows: taskkill /T kills the entire process tree, /F forces
-          require('child_process').execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' })
+          // Use powershell to avoid bash path conversion issues with /T /F flags
+          require('child_process').execFileSync(
+            'taskkill.exe', ['/pid', String(pid), '/T', '/F'],
+            { stdio: 'ignore', windowsHide: true },
+          )
         } else {
           this.currentAgentProcess.kill('SIGTERM')
         }
-      } catch {}
+      } catch (err) {
+        console.log(`[orchestrator] taskkill failed (process may have exited): ${err}`)
+      }
       this.currentAgentProcess = null
     }
+
+    // Cancel DirectAI fetch
+    if (this.fetchController) {
+      this.fetchController.abort()
+      this.fetchController = null
+    }
+
+    // Clear misfire timer
+    if (this.misfireTimer) { clearTimeout(this.misfireTimer); this.misfireTimer = null }
+
     this.isProcessing = false
     this.isRecording = false
     this.pendingAudio = null

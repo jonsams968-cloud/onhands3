@@ -27,7 +27,7 @@ export class DirectAI {
     this.maxTokens = cfg.aiMaxTokens
   }
 
-  async execute(command: string, context: DesktopContext, resolution: string): Promise<ExecutionResult> {
+  async execute(command: string, context: DesktopContext, resolution: string, abortSignal?: AbortSignal): Promise<ExecutionResult> {
     const startTime = Date.now()
 
     const content: unknown[] = []
@@ -50,21 +50,29 @@ export class DirectAI {
       ],
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    try {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortSignal,
+      })
 
-    if (!response.ok) {
-      const err = await response.text()
-      return { success: false, output: '', durationMs: Date.now() - startTime, error: `AI API error: ${response.status} ${err}` }
+      if (!response.ok) {
+        const err = await response.text()
+        return { success: false, output: '', durationMs: Date.now() - startTime, error: `AI API error: ${response.status} ${err}` }
+      }
+
+      const result = await response.json() as { choices: Array<{ message: { content: string } }> }
+      const text = result.choices?.[0]?.message?.content || 'No response'
+
+      return { success: true, output: text, durationMs: Date.now() - startTime }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return { success: false, output: '', durationMs: Date.now() - startTime, error: 'Aborted' }
+      }
+      return { success: false, output: '', durationMs: Date.now() - startTime, error: err.message }
     }
-
-    const result = await response.json() as { choices: Array<{ message: { content: string } }> }
-    const text = result.choices?.[0]?.message?.content || 'No response'
-
-    return { success: true, output: text, durationMs: Date.now() - startTime }
   }
 
   private formatContext(ctx: DesktopContext): string {

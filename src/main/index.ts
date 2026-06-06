@@ -18,6 +18,7 @@ function createWindow(): BrowserWindow {
     y: sh - 430,
     transparent: true,
     frame: false,
+    thickFrame: false,
     roundedCorners: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -31,6 +32,9 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   })
+
+  // Highest z-order level — always on top of everything including fullscreen apps
+  win.setAlwaysOnTop(true, 'screen-saver')
 
   win.setIgnoreMouseEvents(true)
 
