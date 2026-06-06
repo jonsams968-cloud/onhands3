@@ -347,17 +347,26 @@ export class Orchestrator {
     try { globalShortcut.unregister('Escape') } catch {}
   }
 
-  /** Abort the current agent/processing operation */
+  /** Abort the current agent/processing operation — kills entire process tree */
   abort(): void {
     this.unregisterEscAbort()
     if (this.currentAgentProcess) {
-      console.log('[orchestrator] Aborting agent process')
-      try { this.currentAgentProcess.kill('SIGTERM') } catch {}
+      const pid = this.currentAgentProcess.pid
+      console.log(`[orchestrator] Aborting agent process tree (pid=${pid})`)
+      try {
+        if (process.platform === 'win32' && pid) {
+          // Windows: taskkill /T kills the entire process tree, /F forces
+          require('child_process').execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' })
+        } else {
+          this.currentAgentProcess.kill('SIGTERM')
+        }
+      } catch {}
       this.currentAgentProcess = null
     }
     this.isProcessing = false
     this.isRecording = false
     this.pendingAudio = null
     this.sendState('hidden')
+    console.log('[orchestrator] Abort complete — all state reset')
   }
 }

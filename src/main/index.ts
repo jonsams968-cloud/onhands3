@@ -23,6 +23,7 @@ function createWindow(): BrowserWindow {
     resizable: false,
     hasShadow: false,
     show: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
