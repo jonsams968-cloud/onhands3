@@ -1,0 +1,31 @@
+{
+  "name": "onhands3",
+  "version": "0.1.0",
+  "description": "AI-driven smart cursor — voice/text commands via mouse long-press, executed by AI agents",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "chcp 65001 >nul 2>&1 & set PYTHONIOENCODING=utf-8 & set ELECTRON_RUN_AS_NODE= & electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "chcp 65001 >nul 2>&1 & set ELECTRON_RUN_AS_NODE= & electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "koffi": "^3.0.2",
+    "ffmpeg-static": "^5.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-vite": "^3.0.0",
+    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
