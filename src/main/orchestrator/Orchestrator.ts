@@ -207,7 +207,7 @@ export class Orchestrator {
 
     const session = await this.agent.execute(prompt, {
       workingDirectory: context.workingDirectory,
-      timeoutMs: 120_000,
+      timeoutMs: 300_000,
       onProcessSpawn: (proc) => {
         this.currentAgentProcess = proc
       },
@@ -260,6 +260,13 @@ export class Orchestrator {
     parts.push(`You are OnHands, a desktop AI assistant. Execute the user's command.`)
     parts.push(`IMPORTANT: Always respond in Simplified Chinese (简体中文).`)
     parts.push(``)
+    parts.push(`## Rules`)
+    parts.push(`- You are on Windows. Use PowerShell commands (powershell.exe -NoProfile -Command "...") for ALL file/system operations.`)
+    parts.push(`- Do NOT use bash-only commands like ls, mv, cp, rm. Use their PowerShell equivalents (Get-ChildItem, Move-Item, Copy-Item, Remove-Item).`)
+    parts.push(`- For file paths with Chinese characters, always wrap in single quotes.`)
+    parts.push(`- Execute DIRECTLY. Do NOT ask for permission or explain what you will do. Just do it.`)
+    parts.push(`- Respond with the RESULT only, not a description of what you did.`)
+    parts.push(``)
 
     if (context.activeWindow) {
       parts.push(`## Current Environment`)
@@ -277,8 +284,6 @@ export class Orchestrator {
 
     parts.push(`## User Command`)
     parts.push(command)
-    parts.push(``)
-    parts.push(`Execute this command. Use PowerShell for file/system operations. Respond with the RESULT, not a description.`)
 
     return parts.join('\n')
   }

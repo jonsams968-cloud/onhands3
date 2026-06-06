@@ -70,20 +70,12 @@ html, body, #root {
   padding: 14px 18px;
   min-width: 260px;
   max-width: 520px;
-  max-height: 280px;
-  overflow-y: auto;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.5;
   transition: var(--transition);
-}
-
-.capsule::-webkit-scrollbar { width: 3px; }
-.capsule::-webkit-scrollbar-track { background: transparent; }
-.capsule::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.06);
-  border-radius: 3px;
+  /* No overflow on capsule itself — only result scrolls */
 }
 
 /* ─── Animated gradient border (processing state) ─── */
@@ -468,7 +460,15 @@ html, body, #root {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  scrollbar-width: none;             /* Firefox */
+  -ms-overflow-style: none;          /* IE */
   animation: result-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.result-text::-webkit-scrollbar {
+  display: none;                     /* Chrome/Safari */
 }
 
 .result-text .md-code-block {
