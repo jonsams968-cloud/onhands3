@@ -323,6 +323,8 @@ export class Orchestrator {
     parts.push(`6. Execute DIRECTLY. Do NOT ask for permission.`)
     parts.push(`7. After executing, verify the result, then respond in Chinese.`)
     parts.push(`8. When moving/renaming files, first verify source exists, then execute. If moving multiple files to a NEW folder, create the folder FIRST, then move.`)
+    parts.push(`9. NEVER create files named NUL, CON, PRN, AUX, COM1-9, LPT1-9 — these are Windows reserved device names and will cause permanent undeletable files.`)
+    parts.push(`10. If a command fails TWICE in a row with the same approach, STOP and try a completely different method. Do NOT repeat the same failing command.`)
     parts.push(``)
     parts.push(`## Correct Examples`)
     parts.push(`List:      powershell.exe -NoProfile -Command '$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Get-ChildItem | Select-Object Name'`)
