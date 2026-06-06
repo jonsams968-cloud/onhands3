@@ -10,8 +10,17 @@ export interface Agent {
   execute(prompt: string, opts?: AgentExecOptions): Promise<AgentSession>
 }
 
+export interface PermissionRequest {
+  id: string
+  tool: string
+  description: string
+  detail?: string
+}
+
 export interface AgentExecOptions {
   workingDirectory?: string
   timeoutMs?: number
   onOutput?: (chunk: string) => void
+  /** Called when the agent needs permission to use a tool. Return true to approve. */
+  onPermissionRequest?: (req: PermissionRequest) => Promise<boolean>
 }

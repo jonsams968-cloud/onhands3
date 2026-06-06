@@ -13,9 +13,9 @@ function createWindow(): BrowserWindow {
 
   const win = new BrowserWindow({
     width: 600,
-    height: 200,
+    height: 260,
     x: Math.round((sw - 600) / 2),
-    y: sh - 220,
+    y: sh - 290,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -43,7 +43,6 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {
-    // Force UTF-8 output on Windows terminal
     process.stdout.write('\x1b[?65001h')
     try { require('child_process').execSync('chcp 65001', { stdio: 'ignore' }) } catch {}
   }
@@ -71,14 +70,57 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: resize window height dynamically
+  ipcMain.handle('window:resize', (_e, height: number) => {
+    if (mainWindow) {
+      const [w] = mainWindow.getSize()
+      mainWindow.setSize(w, Math.max(120, Math.min(500, height)))
+    }
+  })
+
+  // IPC: permission answer from renderer
+  ipcMain.handle('permission:answer', (_e, id: string, approved: boolean) => {
+    orchestrator?.handlePermissionAnswer(id, approved)
+  })
+
   // Keyboard shortcuts for testing
   globalShortcut.register('CommandOrControl+Shift+1', () => {
     mainWindow?.webContents.send('state-changed', 'recording')
     mainWindow?.show()
     mainWindow?.setIgnoreMouseEvents(false)
   })
+  globalShortcut.register('CommandOrControl+Shift+2', () => {
+    mainWindow?.webContents.send('state-changed', 'transcribed', '这是一段测试语音识别结果')
+    mainWindow?.show()
+    mainWindow?.setIgnoreMouseEvents(false)
+  })
+  globalShortcut.register('CommandOrControl+Shift+3', () => {
+    mainWindow?.webContents.send('state-changed', 'routing', 'agent')
+    mainWindow?.show()
+    mainWindow?.setIgnoreMouseEvents(false)
+  })
+  globalShortcut.register('CommandOrControl+Shift+4', () => {
+    mainWindow?.webContents.send('state-changed', 'processing')
+    mainWindow?.show()
+    mainWindow?.setIgnoreMouseEvents(false)
+    // Simulate stream chunks
+    const lines = ['[system] 正在分析...', '[tool] Bash: ls -la', '[text] 找到3个文件', '[tool] Bash: mv old.txt new.txt']
+    lines.forEach((line, i) => {
+      setTimeout(() => mainWindow?.webContents.send('stream-chunk', line), (i + 1) * 800)
+    })
+  })
+  globalShortcut.register('CommandOrControl+Shift+5', () => {
+    mainWindow?.webContents.send('permission-request', { id: 'test-1', tool: 'Bash', description: '执行命令', detail: 'rm -rf /tmp/test' })
+    mainWindow?.show()
+    mainWindow?.setIgnoreMouseEvents(false)
+  })
   globalShortcut.register('CommandOrControl+Shift+6', () => {
-    mainWindow?.webContents.send('state-changed', 'result', '测试结果')
+    mainWindow?.webContents.send('state-changed', 'result', '已将文件重命名为 2026-06-06')
+    mainWindow?.show()
+    mainWindow?.setIgnoreMouseEvents(false)
+  })
+  globalShortcut.register('CommandOrControl+Shift+7', () => {
+    mainWindow?.webContents.send('state-changed', 'error', '无法连接到 Agent CLI')
     mainWindow?.show()
     mainWindow?.setIgnoreMouseEvents(false)
   })

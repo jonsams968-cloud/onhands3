@@ -21,7 +21,7 @@ export class Orchestrator {
   private pendingAudio: string | null = null
   private pendingPosition = { x: 0, y: 0 }
   private pendingWindow: DesktopContext['activeWindow'] = null
-  private stt: any = null // Will be initialized lazily
+  private stt: any = null
 
   constructor(win: BrowserWindow, mouse: MouseMonitor) {
     this.win = win
@@ -44,23 +44,21 @@ export class Orchestrator {
       console.log('[orchestrator] No agent CLI detected — direct AI mode only')
     }
 
-    // Mouse events — capture window BEFORE showing overlay (which steals focus)
+    // Mouse events — capture window BEFORE showing overlay
     this.mouse.on('longpress', async (e: { x: number; y: number }) => {
       if (this.isProcessing) return
       this.pendingPosition = { x: e.x, y: e.y }
       this.pendingAudio = null
       this.pendingWindow = null
 
-      // CRITICAL: Hide overlay first so we capture the REAL foreground window
-      // (overlay from previous interaction might still be visible)
+      // Hide overlay first to capture the REAL foreground window
       if (this.win.isVisible()) {
         this.win.hide()
         this.win.setIgnoreMouseEvents(true)
-        // Small delay to let Windows update foreground window
         await new Promise(r => setTimeout(r, 50))
       }
 
-      // Snapshot the active window NOW, before our overlay steals focus
+      // Snapshot the active window NOW
       try {
         this.pendingWindow = await this.collector.captureActiveWindow()
         console.log(`[input] Captured window: ${this.pendingWindow?.processName} — "${this.pendingWindow?.title?.slice(0, 40)}"`)
@@ -70,7 +68,7 @@ export class Orchestrator {
     })
 
     this.mouse.on('longpressend', () => {
-      this.sendState('processing')
+      // Don't send processing here — wait for voice recording to complete
     })
 
     // IPC: audio from renderer
@@ -100,7 +98,6 @@ export class Orchestrator {
   async processText(text: string): Promise<void> {
     if (this.isProcessing) return
     this.isProcessing = true
-    this.sendState('processing')
     try {
       await this.executePipeline(text)
     } catch (err) {
@@ -117,14 +114,23 @@ export class Orchestrator {
     }
     this.isProcessing = true
     try {
-      // Transcribe
+      // Show processing while transcribing
+      this.sendState('processing')
+      this.streamChunk('[system] 语音转文字中...')
+
       const text = await this.transcribe(this.pendingAudio)
       this.pendingAudio = null
       if (!text || text.trim().length === 0) {
         this.sendState('hidden')
         return
       }
+
       console.log(`[voice] "${text}"`)
+
+      // Show transcribed text briefly
+      this.sendState('transcribed', text)
+      await new Promise(r => setTimeout(r, 1500))
+
       await this.executePipeline(text)
     } catch (err) {
       this.sendState('error', err instanceof Error ? err.message : 'Voice processing failed')
@@ -137,13 +143,17 @@ export class Orchestrator {
     const mode = this.router.decide(command)
     console.log(`[pipeline] "${command}" → mode: ${mode}`)
 
-    // Use the window captured at longpress time (before overlay stole focus)
+    // Show routing decision
+    this.sendState('routing', mode)
+    await new Promise(r => setTimeout(r, 600))
+
+    // Use the window captured at longpress time
     this.collector.setCapturedWindow(this.pendingWindow)
 
     let context: DesktopContext
     try {
       context = await this.collector.collect(this.pendingPosition.x, this.pendingPosition.y)
-      console.log(`[pipeline] Context: window=${context.activeWindow?.processName || 'none'}, clipboard=${context.clipboard?.slice(0, 50) || 'none'}, screenshot=${context.screenshot ? 'yes' : 'no'}`)
+      console.log(`[pipeline] Context: window=${context.activeWindow?.processName || 'none'}, workdir=${context.workingDirectory}`)
     } catch (err) {
       console.log(`[pipeline] Context collection failed: ${err}`)
       context = { activeWindow: null, clipboard: null, workingDirectory: process.cwd() }
@@ -151,6 +161,10 @@ export class Orchestrator {
 
     const display = screen.getPrimaryDisplay()
     const resolution = `${display.size.width}x${display.size.height}`
+
+    // Show processing state
+    this.sendState('processing')
+    this.streamChunk(`[system] 通过 ${mode === 'agent' ? 'Agent CLI' : 'AI'} 执行...`)
 
     let result: ExecutionResult
     console.log(`[pipeline] Executing via ${mode === 'agent' && this.agent ? 'agent CLI' : 'direct AI'}...`)
@@ -181,8 +195,38 @@ export class Orchestrator {
     const session = await this.agent.execute(prompt, {
       workingDirectory: context.workingDirectory,
       timeoutMs: 120_000,
+      onPermissionRequest: async (req) => {
+        return this.requestPermission(req)
+      },
       onOutput: (chunk) => {
-        this.sendState('processing')
+        // Parse stream-json events and send human-readable lines to renderer
+        for (const line of chunk.split('\n')) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            const type = event.type || '?'
+
+            if (type === 'assistant') {
+              const blocks = event.message?.content || []
+              for (const b of blocks) {
+                if (b.type === 'text' && b.text) {
+                  this.streamChunk(`[text] ${b.text.slice(0, 120)}`)
+                }
+                if (b.type === 'tool_use') {
+                  const detail = JSON.stringify(b.input || {}).slice(0, 80)
+                  this.streamChunk(`[tool] ${b.name}(${detail})`)
+                }
+              }
+            } else if (type === 'result') {
+              // Will be shown in result state
+            } else if (type === 'system') {
+              this.streamChunk(`[system] session=${event.session_id?.slice(0, 8) || '?'}`)
+            }
+          } catch {
+            // Not JSON — just forward as-is
+            this.streamChunk(line.slice(0, 120))
+          }
+        }
       },
     })
 
@@ -203,7 +247,6 @@ export class Orchestrator {
     parts.push(`IMPORTANT: Always respond in Simplified Chinese (简体中文).`)
     parts.push(``)
 
-    // Context
     if (context.activeWindow) {
       parts.push(`## Current Environment`)
       parts.push(`- Active window: ${context.activeWindow.processName} — "${context.activeWindow.title}"`)
@@ -221,13 +264,12 @@ export class Orchestrator {
     parts.push(`## User Command`)
     parts.push(command)
     parts.push(``)
-    parts.push(`Execute this command. Use PowerShell for file/system operations. Use Excel COM for Excel tasks. Respond with the RESULT, not a description.`)
+    parts.push(`Execute this command. Use PowerShell for file/system operations. Respond with the RESULT, not a description.`)
 
     return parts.join('\n')
   }
 
   private async transcribe(base64Audio: string): Promise<string> {
-    // Lazy init STT
     if (!this.stt) {
       const { createSTT } = await import('../stt/WhisperSTT')
       const config = loadConfig()
@@ -246,5 +288,51 @@ export class Orchestrator {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
     }
+  }
+
+  private streamChunk(chunk: string): void {
+    this.win.webContents.send('stream-chunk', chunk)
+  }
+
+  /**
+   * Request permission from the user via the renderer UI.
+   * Returns true if approved, false if denied or timed out.
+   */
+  private pendingPermissions = new Map<string, {
+    resolve: (approved: boolean) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+
+  private requestPermission(req: import('../agents/types').PermissionRequest): Promise<boolean> {
+    return new Promise((resolve) => {
+      // 15-second timeout — auto-deny if user doesn't respond
+      const timer = setTimeout(() => {
+        this.pendingPermissions.delete(req.id)
+        console.log(`[permission] Timeout: ${req.tool} — auto-denied`)
+        resolve(false)
+      }, 15_000)
+
+      this.pendingPermissions.set(req.id, { resolve, timer })
+
+      // Send permission request to renderer
+      this.win.webContents.send('permission-request', {
+        id: req.id,
+        tool: req.tool,
+        description: req.description,
+        detail: req.detail,
+      })
+
+      console.log(`[permission] Requested: ${req.tool} — ${req.description}`)
+    })
+  }
+
+  /** Handle permission answer from renderer */
+  handlePermissionAnswer(id: string, approved: boolean): void {
+    const pending = this.pendingPermissions.get(id)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    this.pendingPermissions.delete(id)
+    console.log(`[permission] ${id}: ${approved ? 'approved' : 'denied'}`)
+    pending.resolve(approved)
   }
 }

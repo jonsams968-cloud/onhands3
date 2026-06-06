@@ -61,17 +61,52 @@ export interface AgentSession {
   durationMs: number
 }
 
-// ─── UI State ───
+// ─── UI State Machine ───
+// hidden → recording → transcribed → routing → processing → result → hidden
+//                                                  ↓          ↑
+//                                                confirm ──────┘
+//                                                  ↓
+//                                                error → hidden
 
-export type UIState = 'hidden' | 'recording' | 'processing' | 'result' | 'error' | 'confirm'
+export type UIState =
+  | 'hidden'       // Window invisible
+  | 'recording'    // Recording voice input
+  | 'transcribed'  // Showing recognized text (brief)
+  | 'routing'      // Showing route decision (brief)
+  | 'processing'   // Agent is executing, streaming output
+  | 'confirm'      // Permission request, awaiting user action
+  | 'result'       // Show successful result
+  | 'error'        // Show error message
+  | 'input'        // Text input mode
+
+// ─── Permission System ───
+
+export interface PermissionRequest {
+  id: string
+  tool: string           // e.g. "Bash", "Write", "Edit"
+  description: string    // Human-readable description
+  detail?: string        // e.g. the command to run
+}
+
+export type PermissionPolicy = 'ask' | 'allow' | 'deny'
+
+export interface PermissionConfig {
+  // Tool-level policies: tool name → policy
+  [tool: string]: PermissionPolicy
+}
 
 // ─── IPC ───
 
 export interface RendererAPI {
   onStateChanged: (cb: (state: UIState, data?: string) => void) => () => void
+  onStreamChunk: (cb: (chunk: string) => void) => () => void
+  onPermissionRequest: (cb: (req: PermissionRequest) => void) => () => void
   sendRecording: (base64Audio: string) => Promise<void>
   sendRecordingError: (error: string) => Promise<void>
   textCommand: (text: string) => Promise<void>
   abortAction: () => Promise<void>
   setInteractive: (interactive: boolean) => Promise<void>
+  hideWindow: () => Promise<void>
+  answerPermission: (id: string, approved: boolean) => Promise<void>
+  resizeWindow: (height: number) => Promise<void>
 }

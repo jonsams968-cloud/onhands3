@@ -1,0 +1,432 @@
+/* ══════════════════════════════════════════════════════════════
+   OnHands3 — Premium UI Styles & Animations
+   ══════════════════════════════════════════════════════════════ */
+
+:root {
+  --glass-bg: rgba(12, 12, 18, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-blur: 24px;
+
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --accent-glow: rgba(99, 102, 241, 0.35);
+
+  --success: #22c55e;
+  --success-glow: rgba(34, 197, 94, 0.25);
+
+  --error: #ef4444;
+  --error-glow: rgba(239, 68, 68, 0.25);
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  --radius: 20px;
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Capsule Container ─── */
+
+.capsule {
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 14px 18px;
+  min-width: 320px;
+  max-width: 560px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  transition: var(--transition);
+  overflow: hidden;
+}
+
+/* ─── Animated gradient border (processing state) ─── */
+
+.capsule--processing {
+  border-color: transparent;
+  background-clip: padding-box;
+}
+
+.capsule--processing::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: var(--radius);
+  padding: 1px;
+  background: conic-gradient(
+    from var(--angle, 0deg),
+    var(--accent) 0%,
+    transparent 15%,
+    transparent 85%,
+    var(--accent) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: rotate-border 2s linear infinite;
+  opacity: 0.6;
+}
+
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes rotate-border {
+  to { --angle: 360deg; }
+}
+
+/* Fallback for browsers without @property */
+@supports not (background: conic-gradient(red, blue)) {
+  .capsule--processing::before {
+    background: linear-gradient(135deg, var(--accent), transparent, var(--accent));
+    animation: pulse-border 2s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse-border {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
+/* ─── Glow effects ─── */
+
+.capsule--recording {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 30px var(--accent-glow);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.03),
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 0 20px var(--accent-glow);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.03),
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 0 40px var(--accent-glow);
+  }
+}
+
+.capsule--result {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 20px var(--success-glow);
+}
+
+.capsule--error {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 20px var(--error-glow);
+}
+
+/* ─── Appear / Disappear ─── */
+
+.capsule-enter {
+  animation: capsule-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.capsule-exit {
+  animation: capsule-out 0.2s ease-in forwards;
+}
+
+@keyframes capsule-in {
+  from {
+    opacity: 0;
+    transform: scale(0.93) translateY(6px);
+    backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    backdrop-filter: blur(var(--glass-blur));
+  }
+}
+
+@keyframes capsule-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(4px);
+  }
+}
+
+/* ─── Recording Waveform ─── */
+
+.waveform {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+}
+
+.waveform__bar {
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(to top, var(--accent), var(--accent-light));
+  animation: wave 1.2s ease-in-out infinite;
+}
+
+.waveform__bar:nth-child(1) { animation-delay: 0s; height: 8px; }
+.waveform__bar:nth-child(2) { animation-delay: 0.1s; height: 14px; }
+.waveform__bar:nth-child(3) { animation-delay: 0.2s; height: 20px; }
+.waveform__bar:nth-child(4) { animation-delay: 0.3s; height: 14px; }
+.waveform__bar:nth-child(5) { animation-delay: 0.4s; height: 8px; }
+
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1); }
+}
+
+/* ─── Transcribed Text (typewriter) ─── */
+
+.transcribed-text {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  animation: typewriter-in 0.3s ease-out;
+}
+
+@keyframes typewriter-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Route Badge ─── */
+
+.route-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  animation: badge-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.route-badge--agent {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent-light);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.route-badge--direct {
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.15);
+}
+
+@keyframes badge-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ─── Processing Stream ─── */
+
+.stream-area {
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.08) transparent;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  padding-right: 4px;
+}
+
+.stream-area::-webkit-scrollbar { width: 3px; }
+.stream-area::-webkit-scrollbar-track { background: transparent; }
+.stream-area::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+}
+
+.stream-line {
+  animation: stream-in 0.15s ease-out;
+  word-break: break-all;
+}
+
+.stream-line--tool {
+  color: var(--accent-light);
+}
+
+.stream-line--text {
+  color: var(--text-primary);
+}
+
+.stream-line--system {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+@keyframes stream-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Spinner ─── */
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Permission Confirm ─── */
+
+.confirm-panel {
+  animation: confirm-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes confirm-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.confirm-btn {
+  padding: 5px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+  font-family: var(--font-sans);
+}
+
+.confirm-btn--approve {
+  background: var(--accent);
+  color: white;
+}
+.confirm-btn--approve:hover {
+  background: var(--accent-light);
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+
+.confirm-btn--deny {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.confirm-btn--deny:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.countdown-ring {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.countdown-ring circle {
+  fill: none;
+  stroke-width: 2;
+}
+
+.countdown-ring__bg {
+  stroke: rgba(255, 255, 255, 0.06);
+}
+
+.countdown-ring__fg {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+
+/* ─── Result ─── */
+
+.result-text {
+  color: var(--success);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: result-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes result-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Error ─── */
+
+.error-text {
+  color: var(--error);
+  font-size: 12px;
+  line-height: 1.5;
+  animation: result-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ─── Text Input ─── */
+
+.text-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  width: 100%;
+  caret-color: var(--accent);
+}
+
+.text-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ─── Utility ─── */
+
+.fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.label-muted {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
