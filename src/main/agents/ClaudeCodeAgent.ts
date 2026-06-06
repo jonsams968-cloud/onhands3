@@ -145,7 +145,7 @@ export class ClaudeCodeAgent implements Agent {
       '--output-format', 'stream-json',       // Structured JSON on stdout
       '--verbose',                            // Show tool calls
       '--dangerously-skip-permissions',       // Skip per-tool approval
-      '--max-turns', '8',                     // Limit agentic turns to prevent runaway
+      '--max-turns', '12',                    // Allow enough turns for multi-file operations
     ]
   }
 
