@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { UTF8_ENV } from '../utils/spawn-utf8'
 import type { AgentInfo, AgentSession } from '../../shared/types'
 import type { Agent, AgentExecOptions } from './types'
 
@@ -31,15 +32,16 @@ export class ClaudeCodeAgent implements Agent {
           cwd,
           env: {
             ...process.env,
-            // Force UTF-8 throughout the process tree (fixes Chinese path/file encoding)
-            PYTHONIOENCODING: 'utf-8',
-            LANG: 'en_US.UTF-8',
-            LESSCHARSET: 'utf-8',
+            ...UTF8_ENV,
           },
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
           shell: true,     // Required for .cmd files on Windows
         })
+
+        // Explicitly decode child output as UTF-8 (data events emit strings)
+        proc.stdout.setEncoding('utf8')
+        proc.stderr.setEncoding('utf8')
 
         // Notify caller so it can track the process for abort
         opts?.onProcessSpawn?.(proc as import('child_process').ChildProcess)
@@ -54,12 +56,11 @@ export class ClaudeCodeAgent implements Agent {
       let lastText = ''
       let eventCount = 0
 
-      proc.stdout.on('data', (chunk: Buffer) => {
-        const str = chunk.toString()
-        stdout += str
-        opts?.onOutput?.(str)
+      proc.stdout.on('data', (chunk: string) => {
+        stdout += chunk
+        opts?.onOutput?.(chunk)
 
-        for (const line of str.split('\n')) {
+        for (const line of chunk.split('\n')) {
           if (!line.trim()) continue
           eventCount++
           try {
@@ -88,10 +89,9 @@ export class ClaudeCodeAgent implements Agent {
         }
       })
 
-      proc.stderr.on('data', (chunk: Buffer) => {
-        const str = chunk.toString()
-        stderr += str
-        for (const line of str.split('\n')) {
+      proc.stderr.on('data', (chunk: string) => {
+        stderr += chunk
+        for (const line of chunk.split('\n')) {
           if (line.trim()) console.log(`[agent:stderr] ${line.slice(0, 200)}`)
         }
       })

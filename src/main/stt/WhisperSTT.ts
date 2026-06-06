@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { execFile } from 'child_process'
+import { execFileUtf8 } from '../utils/spawn-utf8'
 
 interface STTService {
   transcribe(base64Audio: string): Promise<string>
@@ -72,13 +72,9 @@ class LocalWhisper implements STTService {
     this.ready = true
   }
 
-  private run(cmd: string, args: string[]): Promise<string> {
-    return new Promise((resolve, reject) => {
-      execFile(cmd, args, { timeout: 30_000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) reject(new Error(stderr || err.message))
-        else resolve(stdout.trim())
-      })
-    })
+  private async run(cmd: string, args: string[]): Promise<string> {
+    const { stdout } = await execFileUtf8(cmd, args, { timeout: 30_000 })
+    return stdout
   }
 }
 
