@@ -39,7 +39,7 @@ function createWindow(): BrowserWindow {
   // Highest z-order level — always on top of everything including fullscreen apps
   win.setAlwaysOnTop(true, 'screen-saver')
 
-  win.setIgnoreMouseEvents(true)
+  win.setIgnoreMouseEvents(true, { forward: true })
 
   // Workaround for Electron bug #47946 / #39959:
   // Windows DWM redraws white title bar on transparent frameless windows when focus changes.
@@ -99,9 +99,9 @@ app.whenReady().then(async () => {
 
   await orchestrator.initialize()
 
-  // IPC: toggle mouse events
+  // IPC: toggle mouse events — forward:true keeps mousemove events flowing
   ipcMain.handle('window:interactive', (_e, v: boolean) => {
-    if (mainWindow) mainWindow.setIgnoreMouseEvents(!v)
+    if (mainWindow) mainWindow.setIgnoreMouseEvents(!v, !v ? { forward: true } : undefined)
   })
 
   // IPC: hide window from renderer auto-hide timer

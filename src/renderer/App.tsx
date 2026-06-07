@@ -83,7 +83,7 @@ export default function App() {
 
       setVisible(true)
       setExiting(false)
-      window.onhands.setInteractive(true)
+      // Don't setInteractive(true) here — mousemove handler controls it
 
       if (s === 'routing' && d) setRouteMode(d)
 
@@ -143,6 +143,19 @@ export default function App() {
     return window.onhands.onCommandText((text) => {
       if (text) setCommandText(text)
     })
+  }, [])
+
+  // ─── Dynamic hit-test: only capsule area captures clicks ───
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (stateRef.current === 'hidden') return
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const isOverContent = el?.closest('.capsule') != null
+      window.onhands.setInteractive(isOverContent)
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
   }, [])
 
   // ─── Permission requests ───

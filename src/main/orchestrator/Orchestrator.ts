@@ -79,7 +79,7 @@ export class Orchestrator {
       // Hide overlay first to capture the REAL foreground window
       if (this.win.isVisible()) {
         this.win.hide()
-        this.win.setIgnoreMouseEvents(true)
+        this.win.setIgnoreMouseEvents(true, { forward: true })
         await new Promise(r => setTimeout(r, 50))
       }
 
@@ -558,7 +558,7 @@ export class Orchestrator {
     }
 
     if (context.clipboard) {
-      parts.push(`## Clipboard (use as fallback if no selected text and voice command is vague)`)
+      parts.push(`## Clipboard (background reference ONLY — ignore unless user explicitly asks about clipboard)`)
       parts.push(context.clipboard.slice(0, 1000))
       parts.push(``)
     }
@@ -644,7 +644,7 @@ export class Orchestrator {
     }
 
     if (context.clipboard) {
-      parts.push(`## Clipboard`)
+      parts.push(`## Clipboard (background reference ONLY — ignore unless user explicitly asks about clipboard)`)
       parts.push(context.clipboard.slice(0, 4000))
       parts.push(``)
     }
