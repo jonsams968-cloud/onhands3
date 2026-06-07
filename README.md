@@ -1,10 +1,14 @@
 <p align="center">
-  <img src="assets/name.png" alt="OnHands" width="480" />
+  <img src="assets/Logo_W.png" alt="OnHands" width="120" />
 </p>
 
-# OnHands3
+<h1 align="center">OnHands3</h1>
 
-**AI 驱动的智能光标** — 鼠标长按触发语音/文字指令，由 AI Agent 执行桌面操作。
+<p align="center"><strong>AI 驱动的智能光标</strong> — 鼠标长按触发语音/文字指令，由 AI Agent 执行桌面操作。</p>
+
+<p align="center">
+  <img src="assets/name.png" alt="OnHands" width="360" />
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Electron-35-blue" />
