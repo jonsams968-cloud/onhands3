@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell, protocol, net } from 'electron'
 import path from 'path'
 import { MouseMonitor } from './input/MouseMonitor'
 import { Orchestrator } from './orchestrator/Orchestrator'
@@ -62,6 +62,23 @@ function createWindow(): BrowserWindow {
   return win
 }
 
+// ─── Single instance lock — prevent multiple OnHands3 processes ───
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  console.log('[main] Another instance is already running — quitting')
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // Another instance tried to start — focus our existing window
+    console.log('[main] Second instance blocked — focusing existing window')
+    if (mainWindow) {
+      if (!mainWindow.isVisible()) mainWindow.show()
+      mainWindow.setIgnoreMouseEvents(false)
+      mainWindow.focus()
+    }
+  })
+}
+
 // Disable Windows DWM frame drawing for truly frameless transparent windows
 // NOTE: must be a single comma-separated call — multiple appendSwitch calls with same key overwrite each other
 app.commandLine.appendSwitch('disable-features', 'WidgetLayering,CalculateNativeWinOcclusion')
@@ -108,6 +125,28 @@ app.whenReady().then(async () => {
     orchestrator?.handlePermissionAnswer(id, approved)
   })
 
+  // IPC: open file in folder
+  ipcMain.handle('media:openInFolder', (_e, filePath: string) => {
+    shell.openPath(path.dirname(filePath))
+  })
+
+  // IPC: regenerate media
+  ipcMain.handle('media:regenerate', () => {
+    orchestrator?.regenerateMedia()
+  })
+
+  // IPC: save media from temp to target directory
+  ipcMain.handle('media:save', (_e, sourcePath: string, targetDir: string) => {
+    if (!orchestrator) return null
+    return orchestrator.saveMedia(sourcePath, targetDir)
+  })
+
+  // Register onhands-media:// protocol for serving local media files to renderer
+  protocol.handle('onhands-media', (request) => {
+    const filePath = decodeURIComponent(request.url.replace('onhands-media://', ''))
+    return net.fetch(`file:///${filePath.replace(/\\/g, '/')}`)
+  })
+
   // Keyboard shortcuts for testing
   globalShortcut.register('CommandOrControl+Shift+1', () => {
     mainWindow?.webContents.send('state-changed', 'recording')
@@ -150,6 +189,12 @@ app.whenReady().then(async () => {
     mainWindow?.hide()
   })
 
+  // Force kill: Ctrl+Shift+Escape (always available, even when overlay is hidden)
+  globalShortcut.register('CommandOrControl+Shift+Escape', () => {
+    console.log('[main] Force kill — Ctrl+Shift+Escape pressed')
+    process.exit(0)
+  })
+
   try {
     await mouseMonitor.start()
     console.log('[main] Mouse monitor active')
@@ -162,5 +207,6 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 
 app.on('before-quit', async () => {
   globalShortcut.unregisterAll()
+  if (orchestrator) orchestrator.destroy()
   if (mouseMonitor) await mouseMonitor.stop()
 })

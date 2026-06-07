@@ -1,4 +1,4 @@
-import { screen, desktopCapturer } from 'electron'
+import { screen, desktopCapturer, clipboard } from 'electron'
 import { execFileSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -10,6 +10,7 @@ let _getForegroundWindow: any = null
 let _getForegroundWindowPtr: any = null
 let _getWindowTextW: any = null
 let _getWindowThreadProcessId: any = null
+let _keybdEvent: any = null
 
 async function loadWin32(): Promise<void> {
   if (_user32) return
@@ -21,6 +22,7 @@ async function loadWin32(): Promise<void> {
   _getForegroundWindow = _user32.func('GetForegroundWindow', 'uint64', [])
   _getWindowTextW = _user32.func('GetWindowTextW', 'int', ['void *', 'void *', 'int'])
   _getWindowThreadProcessId = _user32.func('GetWindowThreadProcessId', 'uint32', ['void *', 'void *'])
+  _keybdEvent = _user32.func('keybd_event', 'void', ['uint8', 'uint8', 'uint32', 'uint64'])
 }
 
 /**
@@ -33,6 +35,7 @@ export class ContextCollector {
   private capturedWindow: DesktopContext['activeWindow'] = null
   private capturedWorkingDir: string | null = null
   private capturedSelectedFiles: string[] | null = null
+  private capturedSelectedText: string | null = null
   private ownPid = process.pid
 
   /**
@@ -44,6 +47,7 @@ export class ContextCollector {
     // Reset state
     this.capturedWorkingDir = null
     this.capturedSelectedFiles = null
+    this.capturedSelectedText = null
 
     try {
       await loadWin32()
@@ -81,6 +85,9 @@ export class ContextCollector {
 
       const result = { processName: processName || '', title, pid }
       console.log(`[context] Captured: ${processName} — "${title.slice(0, 60)}" (pid=${pid}, hwnd=${hwndNum})`)
+
+      // Capture selected text via Ctrl+C simulation (before overlay steals focus)
+      this.captureSelectedText(processName)
 
       // For Explorer: immediately query Shell COM with exact HWND matching
       if (processName?.toLowerCase() === 'explorer') {
@@ -144,6 +151,7 @@ export class ContextCollector {
       clipboard,
       workingDirectory: this.capturedWorkingDir || process.cwd(),
       selectedFiles: this.capturedSelectedFiles || undefined,
+      selectedText: this.capturedSelectedText || undefined,
     }
   }
 
@@ -160,6 +168,9 @@ export class ContextCollector {
     if (ctx.selectedFiles && ctx.selectedFiles.length > 0) {
       parts.push(`Selected files (user selected these in Explorer):\n${ctx.selectedFiles.map(f => `- ${f}`).join('\n')}`)
     }
+    if (ctx.selectedText) {
+      parts.push(`Selected text (HIGHEST PRIORITY — user selected this before activating):\n${ctx.selectedText.slice(0, 2000)}`)
+    }
     if (ctx.clipboard) {
       const clipped = ctx.clipboard.length > 2000
         ? ctx.clipboard.slice(0, 2000) + '...[truncated]'
@@ -172,6 +183,60 @@ export class ContextCollector {
   }
 
   // ---- Private helpers ----
+
+  /**
+   * Capture selected text by briefly simulating Ctrl+C.
+   * Must be called while foreground window still has focus (before overlay shows).
+   * Saves and restores original clipboard content.
+   */
+  private captureSelectedText(processName: string | null): void {
+    if (!_keybdEvent) return
+
+    // Skip terminals where Ctrl+C sends SIGINT
+    const lower = (processName || '').toLowerCase()
+    if (['windowsterminal', 'cmd', 'powershell'].includes(lower)) return
+    if (lower.includes('terminal')) return
+
+    try {
+      // Don't risk corrupting non-text clipboard (images, files)
+      const formats = clipboard.availableFormats()
+      const hasNonText = formats.some(f => !f.startsWith('text/'))
+      if (hasNonText) return
+
+      const oldClip = clipboard.readText()
+
+      // Wait for foreground window to fully receive focus after overlay hide
+      const focusSAB = new SharedArrayBuffer(4)
+      Atomics.wait(new Int32Array(focusSAB), 0, 0, 100)
+
+      // Send Ctrl+C
+      const VK_CONTROL = 0x11
+      const VK_C = 0x43
+      const KEYEVENTF_KEYUP = 0x0002
+      _keybdEvent(VK_CONTROL, 0, 0, BigInt(0))
+      _keybdEvent(VK_C, 0, 0, BigInt(0))
+      _keybdEvent(VK_C, 0, KEYEVENTF_KEYUP, BigInt(0))
+      _keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYUP, BigInt(0))
+
+      // Wait for clipboard to update
+      const sab = new SharedArrayBuffer(4)
+      Atomics.wait(new Int32Array(sab), 0, 0, 300)
+
+      const newClip = clipboard.readText()
+
+      // Restore original clipboard
+      if (oldClip) clipboard.writeText(oldClip)
+      else clipboard.clear()
+
+      // If clipboard changed → it's the selected text
+      if (newClip && newClip !== oldClip) {
+        this.capturedSelectedText = newClip
+        console.log(`[context] Selected text captured (${newClip.length} chars): "${newClip.slice(0, 60)}..."`)
+      }
+    } catch (err) {
+      console.error(`[context] Selected text capture failed: ${err}`)
+    }
+  }
 
   /**
    * Get Explorer's current folder via Shell COM automation.

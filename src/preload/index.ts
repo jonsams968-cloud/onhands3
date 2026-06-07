@@ -29,4 +29,7 @@ contextBridge.exposeInMainWorld('onhands', {
   hideWindow: () => ipcRenderer.invoke('window:hide'),
   answerPermission: (id: string, approved: boolean) => ipcRenderer.invoke('permission:answer', id, approved),
   resizeWindow: (height: number) => ipcRenderer.invoke('window:resize', height),
+  openInFolder: (filePath: string) => ipcRenderer.invoke('media:openInFolder', filePath),
+  regenerateMedia: () => ipcRenderer.invoke('media:regenerate'),
+  saveMedia: (sourcePath: string, targetDir: string) => ipcRenderer.invoke('media:save', sourcePath, targetDir),
 })

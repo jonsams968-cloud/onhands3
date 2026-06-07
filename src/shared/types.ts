@@ -26,11 +26,12 @@ export interface DesktopContext {
   clipboard: string | null
   workingDirectory: string
   selectedFiles?: string[]       // Files selected in Explorer (full paths)
+  selectedText?: string          // Auto-captured selected text (via Ctrl+C simulation)
 }
 
 // ─── AI / Execution ───
 
-export type ExecutionMode = 'direct' | 'agent'
+export type ExecutionMode = 'direct' | 'agent' | 'image' | 'video'
 
 export interface ExecutionRequest {
   command: string                 // User's voice/text command
@@ -79,6 +80,7 @@ export type UIState =
   | 'result'       // Show successful result
   | 'error'        // Show error message
   | 'input'        // Text input mode
+  | 'preview'      // Media preview (image/video with save/regenerate/close)
 
 // ─── Permission System ───
 
@@ -110,4 +112,7 @@ export interface RendererAPI {
   hideWindow: () => Promise<void>
   answerPermission: (id: string, approved: boolean) => Promise<void>
   resizeWindow: (height: number) => Promise<void>
+  openInFolder: (filePath: string) => Promise<void>
+  regenerateMedia: () => Promise<void>
+  saveMedia: (sourcePath: string, targetDir: string) => Promise<string | null>
 }

@@ -18,6 +18,9 @@ declare global {
       hideWindow: () => Promise<void>
       answerPermission: (id: string, approved: boolean) => Promise<void>
       resizeWindow: (height: number) => Promise<void>
+      openInFolder: (filePath: string) => Promise<void>
+      regenerateMedia: () => Promise<void>
+      saveMedia: (sourcePath: string, targetDir: string) => Promise<string | null>
     }
   }
 }
@@ -33,6 +36,9 @@ export default function App() {
   const [visible, setVisible] = useState(false)
   const [exiting, setExiting] = useState(false)
   const [commandText, setCommandText] = useState('')
+  const [previewData, setPreviewData] = useState<{ type: string; path: string; url: string; saveDir: string } | null>(null)
+  const [savedPath, setSavedPath] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
@@ -68,6 +74,8 @@ export default function App() {
           setRouteMode('')
           setPermission(null)
           setCommandText('')
+          setPreviewData(null)
+          setSavedPath(null)
           window.onhands.setInteractive(false)
         }, 200)
         return
@@ -78,6 +86,33 @@ export default function App() {
       window.onhands.setInteractive(true)
 
       if (s === 'routing' && d) setRouteMode(d)
+
+      if (s === 'preview' && d) {
+        try {
+          const data = JSON.parse(d)
+          setPreviewData(data)
+          setSavedPath(null)
+          window.onhands.resizeWindow(380)
+        } catch {}
+        // Safety auto-hide after 60s
+        hideTimer.current = setTimeout(() => {
+          setExiting(true)
+          setTimeout(() => {
+            setState('hidden')
+            setVisible(false)
+            setExiting(false)
+            setPreviewData(null)
+            window.onhands.hideWindow()
+            window.onhands.setInteractive(false)
+          }, 200)
+        }, 60000)
+        return
+      }
+
+      // Resize back to default for non-preview states
+      if (prevState.current === 'preview') {
+        window.onhands.resizeWindow(400)
+      }
 
       if (s === 'result' || s === 'error') {
         hideTimer.current = setTimeout(() => {
@@ -130,6 +165,25 @@ export default function App() {
     })
   }, [])
 
+  // ─── ESC to close preview ───
+
+  useEffect(() => {
+    if (state !== 'preview') return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setExiting(true)
+        setTimeout(() => {
+          setState('hidden')
+          setPreviewData(null)
+          setSavedPath(null)
+          window.onhands.hideWindow()
+        }, 200)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [state])
+
   // ─── Auto-scroll & auto-focus ───
 
   useEffect(() => {
@@ -168,6 +222,7 @@ export default function App() {
     state === 'processing' && 'capsule--processing',
     state === 'result' && 'capsule--result',
     state === 'error' && 'capsule--error',
+    state === 'preview' && 'capsule--result',
     !exiting && prevState.current === 'hidden' && 'capsule-enter',
     exiting && 'capsule-exit',
   ].filter(Boolean).join(' ')
@@ -178,7 +233,7 @@ export default function App() {
 
         {/* Abort button — top right, visible during active states */}
         {(state === 'processing' || state === 'routing' || state === 'transcribed') && (
-          <button onClick={handleAbort} className="abort-btn" title="终止 (双击ESC)">
+          <button onClick={handleAbort} className="abort-btn" title="终止">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
@@ -324,6 +379,83 @@ export default function App() {
             </div>
             <p className="error-text">{message}</p>
             </div>
+          </div>
+        )}
+
+        {/* ── Media Preview ── */}
+        {state === 'preview' && previewData && (
+          <div className="preview-panel">
+            <div className="preview-media">
+              {previewData.type === 'image' ? (
+                <img src={previewData.url} alt="Generated" className="preview-img" />
+              ) : (
+                <video src={previewData.url} className="preview-video" controls autoPlay loop />
+              )}
+            </div>
+            <div className="preview-actions">
+              {!savedPath ? (
+                <button
+                  className="preview-btn preview-btn--accent"
+                  disabled={saving}
+                  onClick={async () => {
+                    setSaving(true)
+                    try {
+                      const result = await window.onhands.saveMedia(previewData.path, previewData.saveDir)
+                      if (result) setSavedPath(result)
+                    } finally {
+                      setSaving(false)
+                    }
+                  }}
+                  title={`保存到 ${previewData.saveDir}`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M7 2v7M4 6l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 10v1.5a.5.5 0 00.5.5h9a.5.5 0 00.5-.5V10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  <span>{saving ? '保存中...' : `保存到 ${previewData.saveDir.split(/[\\/]/).pop()}`}</span>
+                </button>
+              ) : (
+                <>
+                  <span className="preview-saved-badge">✓ 已保存</span>
+                  <button className="preview-btn" onClick={() => window.onhands.openInFolder(savedPath)} title="打开文件夹">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <path d="M2 4h4l1 1h5v6H2V4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+                    </svg>
+                    <span>打开文件夹</span>
+                  </button>
+                </>
+              )}
+              <button className="preview-btn preview-btn--accent" onClick={() => {
+                setSavedPath(null)
+                setPreviewData(null)
+                setState('processing')
+                window.onhands.regenerateMedia()
+              }} title="重新生成">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M11 7a4 4 0 11-2.4-3.67" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                  <path d="M11 2v2.5h-2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span>重新生成</span>
+              </button>
+              <button className="preview-btn preview-btn--close" onClick={() => {
+                setExiting(true)
+                setTimeout(() => {
+                  setState('hidden')
+                  setPreviewData(null)
+                  setSavedPath(null)
+                  window.onhands.hideWindow()
+                }, 200)
+              }} title="关闭">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </div>
+            {savedPath && (
+              <div className="preview-path" title={savedPath}>
+                📁 {savedPath}
+              </div>
+            )}
           </div>
         )}
 

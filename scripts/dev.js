@@ -9,7 +9,7 @@ try {
   require('child_process').execSync('chcp 65001', { stdio: 'ignore' })
 } catch {}
 
-const { spawn } = require('child_process')
+const { spawn, execFileSync } = require('child_process')
 const child = spawn('npx', ['electron-vite', 'dev'], {
   stdio: 'inherit',
   shell: true,
@@ -17,3 +17,15 @@ const child = spawn('npx', ['electron-vite', 'dev'], {
 })
 
 child.on('exit', (code) => process.exit(code ?? 0))
+
+// On Ctrl+C / SIGTERM: kill the child tree cleanly to prevent orphan Electron processes
+function cleanup() {
+  if (process.platform === 'win32' && child.pid) {
+    try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
+  } else {
+    child.kill('SIGTERM')
+  }
+  process.exit(0)
+}
+process.on('SIGINT', cleanup)
+process.on('SIGTERM', cleanup)
