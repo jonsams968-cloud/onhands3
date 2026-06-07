@@ -18,6 +18,7 @@ export interface LongPressEndEvent {
 
 export interface DesktopContext {
   screenshot?: string            // base64 PNG
+  screenshotPath?: string        // temp PNG file path for agent to Read on demand
   activeWindow: {
     title: string
     processName: string

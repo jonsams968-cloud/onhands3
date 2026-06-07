@@ -24,6 +24,11 @@ export interface Config {
 
   // Data
   dataDir: string
+
+  // Permission system
+  permissionPort: number
+  permissionTimeout: number
+  defaultPermissionAction: 'ask' | 'allow' | 'deny'
 }
 
 let config: Config | null = null
@@ -61,6 +66,10 @@ export function loadConfig(): Config {
     dragThresholdPx:   parseInt(e.DRAG_THRESHOLD_PX || '15'),
 
     dataDir: e.DATA_DIR || path.join(app.getPath('userData'), 'data'),
+
+    permissionPort:           parseInt(e.PERMISSION_PORT || '19843'),
+    permissionTimeout:        parseInt(e.PERMISSION_TIMEOUT || '15000'),
+    defaultPermissionAction:  (e.DEFAULT_PERMISSION_ACTION as any) || 'ask',
   }
 
   return config

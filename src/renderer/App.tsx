@@ -213,6 +213,7 @@ export default function App() {
     if (countdownRef.current) clearInterval(countdownRef.current)
     if (permission) window.onhands.answerPermission(permission.id, approved)
     setPermission(null)
+    setState('processing')  // Return to processing view (agent is still running)
   }, [permission])
 
   const handleSubmit = useCallback(() => {

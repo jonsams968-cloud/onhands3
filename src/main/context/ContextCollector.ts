@@ -1,6 +1,7 @@
 import { screen, desktopCapturer, clipboard } from 'electron'
 import { execFileSync } from 'child_process'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import type { DesktopContext } from '../../shared/types'
 
@@ -37,6 +38,7 @@ export class ContextCollector {
   private capturedSelectedFiles: string[] | null = null
   private capturedSelectedText: string | null = null
   private capturedScreenshot: string | undefined = undefined
+  private capturedScreenshotPath: string | null = null
   private capturedClipboard: string | null = null
   private ownPid = process.pid
 
@@ -51,6 +53,7 @@ export class ContextCollector {
     this.capturedSelectedFiles = null
     this.capturedSelectedText = null
     this.capturedScreenshot = undefined
+    this.capturedScreenshotPath = null
     this.capturedClipboard = null
 
     try {
@@ -99,12 +102,12 @@ export class ContextCollector {
       // Capture selected text via Ctrl+C simulation (before overlay steals focus)
       this.captureSelectedText(processName)
 
-      // For Explorer: immediately query Shell COM with exact HWND matching
+      // For Explorer: query Shell COM once for folder path + selected files
       if (processName?.toLowerCase() === 'explorer') {
-        const shellDir = this.getExplorerFolderPath(hwndNum)
-        if (shellDir) {
-          this.capturedWorkingDir = shellDir
-          console.log(`[context] Explorer working dir: ${shellDir}`)
+        const ctx = this.queryExplorerContext(hwndNum)
+        if (ctx.dir) {
+          this.capturedWorkingDir = ctx.dir
+          console.log(`[context] Explorer working dir: ${ctx.dir}`)
         } else {
           // Fallback: try to parse from title
           const parsedDir = this.parseExplorerTitle(title)
@@ -114,11 +117,9 @@ export class ContextCollector {
           }
         }
 
-        // Capture selected files in Explorer
-        const selected = this.getExplorerSelectedFiles(hwndNum)
-        if (selected && selected.length > 0) {
-          this.capturedSelectedFiles = selected
-          console.log(`[context] Selected files: ${selected.length} items — ${selected.slice(0, 3).map(f => path.basename(f)).join(', ')}${selected.length > 3 ? '...' : ''}`)
+        if (ctx.files && ctx.files.length > 0) {
+          this.capturedSelectedFiles = ctx.files
+          console.log(`[context] Selected files: ${ctx.files.length} items — ${ctx.files.slice(0, 3).map(f => path.basename(f)).join(', ')}${ctx.files.length > 3 ? '...' : ''}`)
         }
       }
 
@@ -150,7 +151,13 @@ export class ContextCollector {
       ])
       this.capturedScreenshot = screenshot
       this.capturedClipboard = clipboardText
-      if (screenshot) console.log(`[context] Screenshot captured (${Math.round(screenshot.length * 0.75 / 1024)}KB)`)
+      if (screenshot) {
+        // Save screenshot as temp PNG file for agent to Read on demand
+        const screenshotPath = path.join(os.tmpdir(), 'onhands-screenshot.png')
+        fs.writeFileSync(screenshotPath, Buffer.from(screenshot, 'base64'))
+        this.capturedScreenshotPath = screenshotPath
+        console.log(`[context] Screenshot saved: ${screenshotPath} (${Math.round(screenshot.length * 0.75 / 1024)}KB)`)
+      }
       if (clipboardText) console.log(`[context] Clipboard captured (${clipboardText.length} chars)`)
 
       return result
@@ -167,6 +174,7 @@ export class ContextCollector {
   collect(): DesktopContext {
     return {
       screenshot: this.capturedScreenshot,
+      screenshotPath: this.capturedScreenshotPath || undefined,
       activeWindow: this.capturedWindow,
       clipboard: this.capturedClipboard,
       workingDirectory: this.capturedWorkingDir || process.cwd(),
@@ -262,11 +270,17 @@ export class ContextCollector {
    * Get Explorer's current folder via Shell COM automation.
    * Uses exact HWND matching to find the correct Explorer window.
    */
-  private getExplorerFolderPath(hwndNum: number | bigint): string | null {
+  /**
+   * Query Explorer folder path AND selected files in a single PowerShell call.
+   * Returns { dir: string | null, files: string[] | null }
+   */
+  private queryExplorerContext(hwndNum: number | bigint): { dir: string | null, files: string[] | null } {
+    const empty = { dir: null as string | null, files: null as string[] | null }
     try {
-      // Pass HWND to PowerShell for exact Shell COM window matching
       const hwndStr = typeof hwndNum === 'bigint' ? hwndNum.toString() : String(hwndNum)
 
+      // Single PowerShell call: get both folder path and selected files
+      // Output format: DIR:<base64path> then FILE:<base64path> per selected file
       const output = execFileSync('powershell', [
         '-NoProfile', '-Command',
         `$targetHwnd = ${hwndStr}; ` +
@@ -283,7 +297,15 @@ export class ContextCollector {
         `        $localPath = $pUri.LocalPath; ` +
         `        if ($localPath -and (Test-Path $localPath)) { ` +
         `          $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($localPath)); ` +
-        `          Write-Output $b64; ` +
+        `          Write-Output "DIR:$b64"; ` +
+        `        } ` +
+        `      } ` +
+        `      $items = $w.Document.SelectedItems(); ` +
+        `      foreach ($item in $items) { ` +
+        `        $p = $item.Path; ` +
+        `        if ($p) { ` +
+        `          $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($p)); ` +
+        `          Write-Output "FILE:$b64"; ` +
         `        } ` +
         `      } ` +
         `      break; ` +
@@ -294,68 +316,31 @@ export class ContextCollector {
 
       if (!output) {
         console.log(`[context] Shell COM: no match for HWND=${hwndStr}`)
-        return null
+        return empty
       }
 
-      // Decode Base64 path
-      const decoded = Buffer.from(output.split('\n')[0].trim(), 'base64').toString('utf-8')
-      if (decoded && fs.existsSync(decoded)) {
-        return decoded
+      let dir: string | null = null
+      const files: string[] = []
+
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('DIR:')) {
+          try {
+            const decoded = Buffer.from(trimmed.slice(4), 'base64').toString('utf-8')
+            if (decoded && fs.existsSync(decoded)) dir = decoded
+          } catch {}
+        } else if (trimmed.startsWith('FILE:')) {
+          try {
+            const decoded = Buffer.from(trimmed.slice(5), 'base64').toString('utf-8')
+            if (decoded && fs.existsSync(decoded)) files.push(decoded)
+          } catch {}
+        }
       }
-      return null
+
+      return { dir, files: files.length > 0 ? files : null }
     } catch (err) {
       console.error(`[context] Shell COM failed: ${err}`)
-      return null
-    }
-  }
-
-  /**
-   * Get selected files in the Explorer window matching the given HWND.
-   * Uses Shell COM automation to query SelectedItems().
-   */
-  private getExplorerSelectedFiles(hwndNum: number | bigint): string[] | null {
-    try {
-      const hwndStr = typeof hwndNum === 'bigint' ? hwndNum.toString() : String(hwndNum)
-
-      // Query Shell COM for selected items in the matching Explorer window
-      // Output: Base64-encoded JSON array of file paths (one per line)
-      const output = execFileSync('powershell', [
-        '-NoProfile', '-Command',
-        `$targetHwnd = ${hwndStr}; ` +
-        `$shell = New-Object -ComObject Shell.Application; ` +
-        `$wins = $shell.Windows(); ` +
-        `foreach ($w in $wins) { ` +
-        `  try { ` +
-        `    if ($w.HWND -eq $targetHwnd) { ` +
-        `      $items = $w.Document.SelectedItems(); ` +
-        `      foreach ($item in $items) { ` +
-        `        $p = $item.Path; ` +
-        `        if ($p) { ` +
-        `          $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($p)); ` +
-        `          Write-Output $b64; ` +
-        `        } ` +
-        `      } ` +
-        `      break; ` +
-        `    } ` +
-        `  } catch {} ` +
-        `}`,
-      ], { encoding: 'utf-8', timeout: 8000 }).trim()
-
-      if (!output) return null
-
-      // Decode each Base64 line into a file path
-      const paths = output.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .map(line => {
-          try { return Buffer.from(line, 'base64').toString('utf-8') } catch { return null }
-        })
-        .filter((p): p is string => !!p && fs.existsSync(p))
-
-      return paths.length > 0 ? paths : null
-    } catch (err) {
-      console.error(`[context] Selected files capture failed: ${err}`)
-      return null
+      return empty
     }
   }
 

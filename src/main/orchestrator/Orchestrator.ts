@@ -11,6 +11,7 @@ import { AgentDetector } from '../agents/AgentDetector'
 import { ClaudeCodeAgent } from '../agents/ClaudeCodeAgent'
 import type { Agent } from '../agents/types'
 import { loadConfig } from '../config'
+import { PermissionServer } from '../permission/PermissionServer'
 import type { DesktopContext, ExecutionResult, UIState } from '../../shared/types'
 
 // Regex to detect media marker in agent output
@@ -46,6 +47,9 @@ export class Orchestrator {
   private lastMediaContext: DesktopContext | null = null
   private mediaTempDir = path.join(os.tmpdir(), 'onhands-media')
 
+  // Permission system
+  private permissionServer: PermissionServer | null = null
+
   constructor(win: BrowserWindow, mouse: MouseMonitor) {
     this.win = win
     this.mouse = mouse
@@ -67,10 +71,26 @@ export class Orchestrator {
       console.log('[orchestrator] No agent CLI detected — direct AI mode only')
     }
 
+    // Start permission server
+    if (config.defaultPermissionAction === 'ask') {
+      this.permissionServer = new PermissionServer(
+        this.win,
+        config.permissionTimeout,
+        config.permissionPort,
+      )
+      const started = await this.permissionServer.start()
+      if (!started) {
+        this.permissionServer = null
+        console.warn('[orchestrator] Permission server failed — running without permission checks')
+      }
+    } else {
+      console.log(`[orchestrator] Permission: default="${config.defaultPermissionAction}" — server not started`)
+    }
+
     // Mouse events — capture window BEFORE showing overlay
     this.mouse.on('longpress', async (e: { x: number; y: number }) => {
       if (this.isProcessing) return
-      if (Date.now() - this.lastAbortTime < 1000) return
+      if (Date.now() - this.lastAbortTime < 200) return
       this.pendingPosition = { x: e.x, y: e.y }
       this.pendingAudio = null
       this.pendingWindow = null
@@ -625,6 +645,24 @@ export class Orchestrator {
       parts.push(``)
     }
 
+    // Inject permission protocol if server is running
+    if (this.permissionServer?.running) {
+      parts.push(`## 危险操作权限协议 (MANDATORY)`)
+      parts.push(`在执行以下操作前，必须先请求用户许可：`)
+      parts.push(`- 文件删除（rm、Remove-Item、del）`)
+      parts.push(`- 文件移动/重命名（mv、Move-Item、Rename-Item）`)
+      parts.push(`- 强制 Git 操作（git push --force、git reset --hard）`)
+      parts.push(`- 批量文件操作（影响5个以上文件）`)
+      parts.push(`- 注册表/系统配置修改（reg、netsh、bcdedit）`)
+      parts.push(`- 进程管理（taskkill、Stop-Process）`)
+      parts.push(``)
+      parts.push(`请求方法（用 curl，一步完成，无需额外转义）：`)
+      parts.push(`  curl -s -X POST http://127.0.0.1:${this.permissionServer.port}/permission -H "Content-Type: application/json" -d '{"tool":"工具名","description":"简短描述","detail":"完整命令"}'`)
+      parts.push(`  返回 {"approved":true} 表示允许，{"approved":false} 表示拒绝（停止并告知用户）`)
+      parts.push(`  注意：直接复制模板，只替换 tool/description/detail 的值`)
+      parts.push(``)
+    }
+
     parts.push(`## User Command`)
     parts.push(command)
 
@@ -638,7 +676,13 @@ export class Orchestrator {
     parts.push(`You are OnHands, a desktop AI assistant running on Windows 11.`)
     parts.push(`Always respond in Simplified Chinese (简体中文).`)
     parts.push(``)
-    parts.push(`## Rules (CRITICAL)`)
+    parts.push(`## SAFETY RULES (MANDATORY — NEVER VIOLATE)`)
+    parts.push(`1. If the user explicitly says "delete", "remove", "move", "rename" — DO IT. The voice command IS the permission.`)
+    parts.push(`2. NEVER overwrite existing files. Always use numbered suffixes (file_1.ext, file_2.ext).`)
+    parts.push(`3. Before BATCH operations affecting 5+ files, LIST what you will do first.`)
+    parts.push(`4. If a file operation fails, STOP and report — do NOT retry with force flags.`)
+    parts.push(``)
+    parts.push(`## Technical Rules`)
     parts.push(`1. Commands run through bash. Bash eats $variables. You MUST wrap PowerShell commands in SINGLE quotes to prevent bash from interpreting $:`)
     parts.push(`   CORRECT: powershell.exe -NoProfile -Command 'Get-ChildItem | Where-Object { $_.Name -match "pattern" }'`)
     parts.push(`   WRONG:   powershell.exe -NoProfile -Command "Get-ChildItem | Where-Object { $_.Name }"  ← bash eats $_`)
@@ -647,37 +691,33 @@ export class Orchestrator {
     parts.push(`3. Use double quotes for paths INSIDE the single-quoted command: powershell.exe -NoProfile -Command '... "C:\\path\\中文" ...'`)
     parts.push(`4. Use -LiteralPath for Move-Item, Copy-Item, Rename-Item, Remove-Item with Chinese names.`)
     parts.push(`5. NEVER write .ps1 script files. ALWAYS use inline one-liners.`)
-    parts.push(`6. Execute DIRECTLY. Do NOT ask for permission.`)
-    parts.push(`7. ALWAYS provide the ACTUAL result — not a description of what you did or will do.`)
-    parts.push(`8. If a command fails TWICE in a row, STOP and try a different method.`)
+    parts.push(`6. ALWAYS provide the ACTUAL result — not a description of what you did or will do.`)
+    parts.push(`7. If a command fails TWICE in a row, STOP and try a different method.`)
     parts.push(``)
 
-    // Image generation capability — agent decides when to use it
+    // Image generation — progressive disclosure
     const isImageFile = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
-    const hasImageContext = (context.selectedFiles?.some(isImageFile)) || context.selectedText
+    const selectedImages = context.selectedFiles?.filter(isImageFile) || []
+    const hasSelectedImages = selectedImages.length > 0
 
-    if (hasImageContext || true) {  // Always include so agent can handle any image request
-      parts.push(`## Image Generation Capability`)
-      parts.push(`If you determine the user wants to generate, edit, or modify an image, use the Agnes Image API via a Node.js script:`)
-      parts.push(`1. Write tool → save to "${this.mediaTempDir}/_gen.js"`)
-      parts.push(`2. The script should use Node.js https/http module to call the API`)
-      parts.push(`3. Bash tool → node "${this.mediaTempDir}/_gen.js"`)
-      parts.push(`4. Bash tool → rm -f "${this.mediaTempDir}/_gen.js"`)
+    if (hasSelectedImages) {
+      // User selected image files → inject full img2img API details
+      parts.push(`## Image Editing Capability — IMAGE-TO-IMAGE MODE`)
+      parts.push(`The user selected image(s) to edit. You MUST use image-to-image, NOT generate from scratch.`)
+      parts.push(`Write a Node.js script to "${this.mediaTempDir}/_gen.js", then: node "${this.mediaTempDir}/_gen.js"`)
       parts.push(`API: POST ${config.aiBaseUrl}/images/generations`)
       parts.push(`Headers: Authorization: Bearer ${config.aiApiKey}, Content-Type: application/json`)
-      parts.push(``)
-      parts.push(`### Text-to-Image (generating from scratch):`)
-      parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "ENGLISH_PROMPT", "size": "1024x768", "return_base64": true }`)
-      parts.push(``)
-      parts.push(`### Image-to-Image (editing an existing image — USE WHEN USER SELECTED AN IMAGE):`)
-      parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "EDIT_INSTRUCTION + 'while preserving the original composition'", "size": "1024x768", "extra_body": { "image": ["data:image/png;base64,BASE64_OF_SOURCE"], "response_format": "b64_json" } }`)
-      parts.push(`To get base64 of source: const b64 = fs.readFileSync('SOURCE_PATH').toString('base64')`)
-      parts.push(`IMPORTANT: When editing, ALWAYS pass source image in extra_body.image — NEVER generate from scratch.`)
-      parts.push(``)
+      parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "EDIT_INSTRUCTION while preserving the original composition", "size": "1024x768", "extra_body": { "image": ["data:image/png;base64,BASE64_OF_SOURCE"], "response_format": "b64_json" } }`)
+      parts.push(`Read source image as base64: const b64 = fs.readFileSync('SOURCE_PATH').toString('base64')`)
       parts.push(`Response: { "data": [{ "b64_json": "..." }] } or { "data": [{ "url": "https://..." }] }`)
       parts.push(`Save to: ${this.mediaTempDir}/agnes_image_TIMESTAMP.png`)
-      parts.push(`After saving, include this EXACT marker: [ONHANDS_MEDIA:image:FULL_FILE_PATH]`)
-      parts.push(`NEVER use PowerShell for API calls — use Node.js instead (avoids encoding issues).`)
+      parts.push(`After saving, include: [ONHANDS_MEDIA:image:FULL_FILE_PATH]`)
+      parts.push(`NEVER use PowerShell for API calls — use Node.js instead.`)
+      parts.push(``)
+    } else {
+      // No image context → just a brief hint
+      parts.push(`## Image Generation (available on demand)`)
+      parts.push(`If user wants to generate/edit an image: API POST ${config.aiBaseUrl}/images/generations, model "agnes-image-2.1-flash", key ${config.aiApiKey}. Use Node.js script, save to "${this.mediaTempDir}/agnes_image_TIMESTAMP.png", include marker [ONHANDS_MEDIA:image:FULL_FILE_PATH].`)
       parts.push(``)
     }
 
@@ -686,26 +726,21 @@ export class Orchestrator {
       parts.push(`- Active window: ${context.activeWindow.processName} — "${context.activeWindow.title}"`)
       parts.push(`- Working directory: ${context.workingDirectory}`)
       parts.push(`- Screen resolution: ${resolution}`)
+      if (context.screenshotPath) {
+        parts.push(`- Window screenshot: ${context.screenshotPath} (Read this file if you need to see what's on screen)`)
+      }
       parts.push(``)
     }
 
     if (context.selectedFiles && context.selectedFiles.length > 0) {
-      const isImage = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
-      const imageFiles = context.selectedFiles.filter(isImage)
-      if (imageFiles.length > 0) {
-        parts.push(`## User Selected Images — USE IMAGE-TO-IMAGE MODE`)
-        parts.push(`The user selected image files for editing. You MUST use image-to-image (NOT text-to-image from scratch).`)
-        parts.push(`To do img2img: read the file as base64, then include it in extra_body.image as a Data URI:`)
-        parts.push(`  "extra_body": { "image": ["data:image/png;base64,BASE64_CONTENT"], "response_format": "b64_json" }`)
-        parts.push(`Prompt MUST include "while preserving the original composition" to keep the image structure.`)
-        parts.push(`DO NOT generate from scratch — always pass the source image via extra_body.image.`)
-        parts.push(``)
-        for (const f of imageFiles) {
+      if (hasSelectedImages) {
+        parts.push(`## Selected Images (source for img2img)`)
+        for (const f of selectedImages) {
           parts.push(`- ${f}`)
         }
         parts.push(``)
       } else {
-        parts.push(`## User Selected Files (IMPORTANT)`)
+        parts.push(`## Selected Files`)
         for (const f of context.selectedFiles) {
           parts.push(`- ${f}`)
         }
@@ -722,6 +757,24 @@ export class Orchestrator {
     if (context.clipboard) {
       parts.push(`## Clipboard (background reference ONLY — ignore unless user explicitly asks about clipboard)`)
       parts.push(context.clipboard.slice(0, 4000))
+      parts.push(``)
+    }
+
+    // Inject permission protocol if server is running
+    if (this.permissionServer?.running) {
+      parts.push(`## 危险操作权限协议 (MANDATORY)`)
+      parts.push(`在执行以下操作前，必须先请求用户许可：`)
+      parts.push(`- 文件删除（rm、Remove-Item、del）`)
+      parts.push(`- 文件移动/重命名（mv、Move-Item、Rename-Item）`)
+      parts.push(`- 强制 Git 操作（git push --force、git reset --hard）`)
+      parts.push(`- 批量文件操作（影响5个以上文件）`)
+      parts.push(`- 注册表/系统配置修改（reg、netsh、bcdedit）`)
+      parts.push(`- 进程管理（taskkill、Stop-Process）`)
+      parts.push(``)
+      parts.push(`请求方法（用 curl，一步完成，无需额外转义）：`)
+      parts.push(`  curl -s -X POST http://127.0.0.1:${this.permissionServer.port}/permission -H "Content-Type: application/json" -d '{"tool":"工具名","description":"简短描述","detail":"完整命令"}'`)
+      parts.push(`  返回 {"approved":true} 表示允许，{"approved":false} 表示拒绝（停止并告知用户）`)
+      parts.push(`  注意：直接复制模板，只替换 tool/description/detail 的值`)
       parts.push(``)
     }
 
@@ -804,8 +857,8 @@ export class Orchestrator {
     this.win.webContents.send('stream-chunk', chunk)
   }
 
-  handlePermissionAnswer(_id: string, _approved: boolean): void {
-    // Placeholder
+  handlePermissionAnswer(id: string, approved: boolean): void {
+    this.permissionServer?.resolveRequest(id, approved)
   }
 
   /**
@@ -866,6 +919,7 @@ export class Orchestrator {
 
   abort(): void {
     console.log('[orchestrator] Abort triggered')
+    this.permissionServer?.rejectAll()
     this.unregisterEscHandler()
     this.aborted = true
 
@@ -904,6 +958,7 @@ export class Orchestrator {
 
   /** Full cleanup on app quit — kills all child processes */
   destroy(): void {
+    this.permissionServer?.stop()
     this.unregisterEscHandler()
     if (this.currentAgentProcess) {
       const pid = this.currentAgentProcess.pid
