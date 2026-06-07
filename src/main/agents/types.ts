@@ -9,6 +9,7 @@ import type { AgentInfo, AgentSession } from '../../shared/types'
 export interface Agent {
   readonly info: AgentInfo
   execute(prompt: string, opts?: AgentExecOptions): Promise<AgentSession>
+  resume(sessionId: string, prompt: string, opts?: AgentExecOptions): Promise<AgentSession>
 }
 
 export interface PermissionRequest {

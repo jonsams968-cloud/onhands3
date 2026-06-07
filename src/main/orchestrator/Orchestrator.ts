@@ -13,9 +13,50 @@ import type { Agent } from '../agents/types'
 import { loadConfig } from '../config'
 import { PermissionServer } from '../permission/PermissionServer'
 import type { DesktopContext, ExecutionResult, UIState } from '../../shared/types'
+import type { AskRequest } from '../../shared/types'
 
 // Regex to detect media marker in agent output
 const MEDIA_MARKER_RE = /\[ONHANDS_MEDIA:(image|video):([^\]]+)\]/
+
+// Bracket-counting parser for [ONHANDS_ASK:json] marker
+// Handles nested JSON objects/arrays without false matches
+function extractAskMarker(text: string): AskRequest | null {
+  const marker = '[ONHANDS_ASK:'
+  const start = text.indexOf(marker)
+  if (start === -1) return null
+
+  const jsonStart = text.indexOf('{', start + marker.length)
+  if (jsonStart === -1) return null
+
+  let depth = 0
+  let inString = false
+  let escape = false
+
+  for (let i = jsonStart; i < text.length; i++) {
+    const ch = text[i]
+
+    if (escape) { escape = false; continue }
+    if (ch === '\\' && inString) { escape = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+
+    if (ch === '{' || ch === '[') depth++
+    else if (ch === '}' || ch === ']') {
+      depth--
+      if (depth === 0 && ch === '}') {
+        // Check that marker closes with ] right after
+        if (i + 1 < text.length && text[i + 1] === ']') {
+          try {
+            return JSON.parse(text.slice(jsonStart, i + 1))
+          } catch {
+            return null
+          }
+        }
+      }
+    }
+  }
+  return null  // Marker not yet complete
+}
 
 export class Orchestrator {
   private win: BrowserWindow
@@ -49,6 +90,13 @@ export class Orchestrator {
 
   // Permission system
   private permissionServer: PermissionServer | null = null
+
+  // Ask protocol state
+  private askDepth = 0                  // Max 2 nested ASK rounds
+  private askSessionId: string | null = null  // Session to resume after user answers
+  private askContext: DesktopContext | null = null  // Context to reuse on resume
+  private askResolution = ''
+  private askTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(win: BrowserWindow, mouse: MouseMonitor) {
     this.win = win
@@ -164,6 +212,11 @@ export class Orchestrator {
     // IPC: abort
     ipcMain.handle('action:abort', async () => {
       this.abort()
+    })
+
+    // IPC: ask answer (user clicked a button)
+    ipcMain.handle('ask:answer', async (_e: any, optionLabel: string) => {
+      this.handleAskAnswer(optionLabel)
     })
 
     console.log('[orchestrator] Ready')
@@ -337,6 +390,12 @@ export class Orchestrator {
 
     if (this.aborted) return
 
+    // ASK was triggered — don't show result, wait for user answer
+    if (result.output === '__ASK_PENDING__') {
+      console.log('[pipeline] ASK pending — waiting for user answer')
+      return
+    }
+
     console.log(`[pipeline] Done: success=${result.success}, output=${result.output?.slice(0, 100)}, duration=${result.durationMs}ms`)
 
     // Check for media marker in any mode — agent might generate images on its own
@@ -425,6 +484,9 @@ export class Orchestrator {
     const prompt = this.buildAgentPrompt(command, context, resolution)
     console.log(`[pipeline] Agent prompt:\n${prompt.slice(0, 300)}...`)
 
+    let askTriggered = false
+    let capturedSessionId = ''  // Track session ID from stream events (session is TDZ during onOutput)
+
     const session = await this.agent.execute(prompt, {
       workingDirectory: context.workingDirectory,
       timeoutMs: 300_000,
@@ -442,9 +504,48 @@ export class Orchestrator {
               const blocks = event.message?.content || []
               for (const b of blocks) {
                 if (b.type === 'text' && b.text) {
-                  this.streamChunk(`[text] ${b.text.slice(0, 120)}`)
+                  // Check for ASK marker in the full accumulated text
+                  const ask = extractAskMarker(b.text)
+                  if (ask && ask.options?.length > 0 && this.askDepth < 2) {
+                    console.log(`[ask] Detected: "${ask.question}" (${ask.options.length} options)`)
+                    askTriggered = true
+
+                    // Save state for resume — use capturedSessionId, NOT session (which is TDZ here)
+                    this.askSessionId = capturedSessionId || null
+                    this.askContext = context
+                    this.askResolution = resolution
+                    this.askDepth++
+
+                    // Show ask UI — send ask data as state-changed data (single IPC = atomic)
+                    this.sendState('ask', JSON.stringify(ask))
+
+                    // Set 30s timeout
+                    if (this.askTimer) clearTimeout(this.askTimer)
+                    this.askTimer = setTimeout(() => {
+                      console.log('[ask] Timeout — aborting')
+                      this.abort()
+                    }, 30_000)
+
+                    // Kill the agent process — will resume after user answers
+                    if (this.currentAgentProcess) {
+                      try {
+                        require('child_process').execFileSync(
+                          'taskkill.exe', ['/pid', String(this.currentAgentProcess.pid), '/T', '/F'],
+                          { stdio: 'ignore', windowsHide: true },
+                        )
+                      } catch {}
+                      this.currentAgentProcess = null
+                    }
+                    return  // Stop processing this chunk
+                  }
+
+                  // Normal text streaming (skip the ASK marker itself)
+                  const displayText = b.text.replace(/\[ONHANDS_ASK:[\s\S]*?\]/, '').trim()
+                  if (displayText) {
+                    this.streamChunk(`[text] ${displayText.slice(0, 120)}`)
+                  }
                 }
-                if (b.type === 'tool_use') {
+                if (b.type === 'tool_use' && !askTriggered) {
                   const detail = JSON.stringify(b.input || {}).slice(0, 80)
                   this.streamChunk(`[tool] ${b.name}(${detail})`)
                 }
@@ -452,14 +553,21 @@ export class Orchestrator {
             } else if (type === 'result') {
               // Will be shown in result state
             } else if (type === 'system') {
+              if (event.session_id) capturedSessionId = event.session_id
               this.streamChunk(`[system] session=${event.session_id?.slice(0, 8) || '?'}`)
             }
           } catch {
-            this.streamChunk(line.slice(0, 120))
+            if (!askTriggered) this.streamChunk(line.slice(0, 120))
           }
         }
       },
     })
+
+    // If ASK was triggered, don't process the result — waiting for user answer
+    if (askTriggered) {
+      this.currentAgentProcess = null
+      return { success: true, output: '__ASK_PENDING__', durationMs: session.durationMs }
+    }
 
     this.currentAgentProcess = null
     console.log(`[pipeline] Agent result: exitCode=${session.exitCode}, output=${session.output?.slice(0, 100)}`)
@@ -694,6 +802,17 @@ export class Orchestrator {
     parts.push(`6. ALWAYS provide the ACTUAL result — not a description of what you did or will do.`)
     parts.push(`7. If a command fails TWICE in a row, STOP and try a different method.`)
     parts.push(``)
+    parts.push(`## Communication Protocol`)
+    parts.push(`When you genuinely cannot determine the user's intent and MUST ask a question, output this EXACT marker:`)
+    parts.push(`[ONHANDS_ASK:{"question":"你的问题","options":[{"label":"选项1","value":"opt1"},{"label":"选项2","value":"opt2"}]}]`)
+    parts.push(`Rules:`)
+    parts.push(`- If command + selectedText uniquely identifies intent → execute directly, NEVER ask`)
+    parts.push(`- If command + selectedFiles uniquely identifies target → execute directly, NEVER ask`)
+    parts.push(`- If command itself is clear enough → execute directly, NEVER ask`)
+    parts.push(`- ONLY ask when genuinely ambiguous (e.g. no selectedText and "translate" — translate what?)`)
+    parts.push(`- Keep 2-4 options, label < 20 chars, use Chinese for question and labels`)
+    parts.push(`- NEVER ask in plain text — the user CANNOT respond to free-form questions`)
+    parts.push(``)
 
     // Image generation — progressive disclosure
     const isImageFile = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
@@ -831,22 +950,142 @@ export class Orchestrator {
     this.win.webContents.send('state-changed', state, data)
     if (!this.win.isVisible() && state !== 'hidden') {
       this.win.show()
-      this.win.setIgnoreMouseEvents(false)
     }
     if (state === 'hidden') {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
       this.win.webContents.send('command-text', '')
+    } else if (state === 'ask' || state === 'confirm') {
+      // Ask/confirm need immediate interactivity — set in main process
+      // (don't rely on renderer IPC round-trip which causes click-through delay)
+      this.win.setIgnoreMouseEvents(false)
+      this.win.focus()
+      this.win.moveTop()
     }
 
     // ESC handler: register for active states (long-press 5s → force kill)
     // NOT for preview — renderer handles ESC for close via keydown event
-    const escStates: UIState[] = ['recording', 'transcribed', 'routing', 'processing', 'confirm', 'input']
+    const escStates: UIState[] = ['recording', 'transcribed', 'routing', 'processing', 'confirm', 'input', 'ask']
     if (escStates.includes(state)) {
       this.registerEscHandler()
     } else {
       this.unregisterEscHandler()
     }
+  }
+
+  /** Handle user's answer to an ASK prompt — resume agent session */
+  private async handleAskAnswer(optionLabel: string): Promise<void> {
+    if (this.askTimer) { clearTimeout(this.askTimer); this.askTimer = null }
+    if (!this.askSessionId || !this.agent) {
+      console.log('[ask] No session to resume — aborting')
+      this.resetAskState()
+      this.sendState('hidden')
+      return
+    }
+
+    console.log(`[ask] User chose: "${optionLabel}" — resuming session ${this.askSessionId.slice(0, 8)}...`)
+
+    const resumePrompt = `用户选择了: "${optionLabel}"。请根据用户的选择继续执行。`
+    this.sendState('processing')
+    this.streamChunk(`[system] 用户选择了: ${optionLabel}`)
+
+    try {
+      let resumeSessionId = ''  // Track session ID from stream events (session is TDZ during onOutput)
+
+      const session = await this.agent.resume(this.askSessionId, resumePrompt, {
+        workingDirectory: this.askContext?.workingDirectory || process.cwd(),
+        timeoutMs: 300_000,
+        onProcessSpawn: (proc) => {
+          this.currentAgentProcess = proc
+        },
+        onOutput: (chunk) => {
+          for (const line of chunk.split('\n')) {
+            if (!line.trim()) continue
+            try {
+              const event = JSON.parse(line)
+              const type = event.type || '?'
+
+              if (type === 'assistant') {
+                const blocks = event.message?.content || []
+                for (const b of blocks) {
+                  if (b.type === 'text' && b.text) {
+                    const ask = extractAskMarker(b.text)
+                    if (ask && ask.options?.length > 0 && this.askDepth < 2) {
+                      console.log(`[ask] Nested ask detected: "${ask.question}"`)
+                      this.askSessionId = resumeSessionId || this.askSessionId
+                      this.askDepth++
+
+                      this.sendState('ask', JSON.stringify(ask))
+
+                      if (this.askTimer) clearTimeout(this.askTimer)
+                      this.askTimer = setTimeout(() => {
+                        console.log('[ask] Timeout — aborting')
+                        this.abort()
+                      }, 30_000)
+
+                      if (this.currentAgentProcess) {
+                        try {
+                          require('child_process').execFileSync(
+                            'taskkill.exe', ['/pid', String(this.currentAgentProcess.pid), '/T', '/F'],
+                            { stdio: 'ignore', windowsHide: true },
+                          )
+                        } catch {}
+                        this.currentAgentProcess = null
+                      }
+                      return
+                    }
+                    const displayText = b.text.replace(/\[ONHANDS_ASK:[\s\S]*?\]/, '').trim()
+                    if (displayText) this.streamChunk(`[text] ${displayText.slice(0, 120)}`)
+                  }
+                  if (b.type === 'tool_use') {
+                    const detail = JSON.stringify(b.input || {}).slice(0, 80)
+                    this.streamChunk(`[tool] ${b.name}(${detail})`)
+                  }
+                }
+              } else if (type === 'system') {
+                if (event.session_id) resumeSessionId = event.session_id
+              }
+            } catch {
+              this.streamChunk(line.slice(0, 120))
+            }
+          }
+        },
+      })
+
+      this.currentAgentProcess = null
+      this.resetAskState()
+
+      // Process result same as executePipeline
+      let output = session.output
+      if (!output || output.length < 10) {
+        output = session.output || session.error || 'No output'
+      }
+
+      if (!this.tryShowMediaPreview(output, this.askContext || this.collector.collect())) {
+        if (session.exitCode === 0 && output) {
+          this.sendState('result', output)
+        } else {
+          this.sendState('error', output)
+        }
+      }
+
+      setTimeout(() => {
+        if (!this.isProcessing) this.sendState('hidden')
+      }, 12000)
+    } catch (err) {
+      this.resetAskState()
+      this.sendState('error', err instanceof Error ? err.message : 'Resume failed')
+    } finally {
+      this.isProcessing = false
+    }
+  }
+
+  private resetAskState(): void {
+    if (this.askTimer) { clearTimeout(this.askTimer); this.askTimer = null }
+    this.askDepth = 0
+    this.askSessionId = null
+    this.askContext = null
+    this.askResolution = ''
   }
 
   private sendCommandText(text: string): void {
@@ -947,6 +1186,9 @@ export class Orchestrator {
     }
 
     if (this.misfireTimer) { clearTimeout(this.misfireTimer); this.misfireTimer = null }
+
+    // Clear ask state if active
+    this.resetAskState()
 
     this.isProcessing = false
     this.isRecording = false

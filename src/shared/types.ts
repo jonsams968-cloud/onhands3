@@ -62,6 +62,7 @@ export interface AgentSession {
   error?: string
   exitCode: number | null
   durationMs: number
+  sessionId?: string          // Claude Code session UUID for --resume
 }
 
 // ─── UI State Machine ───
@@ -70,6 +71,9 @@ export interface AgentSession {
 //                                                confirm ──────┘
 //                                                  ↓
 //                                                error → hidden
+//                         processing → ask → (resume) → processing
+//                                      ↓ (30s timeout / abort)
+//                                    hidden
 
 export type UIState =
   | 'hidden'       // Window invisible
@@ -82,6 +86,7 @@ export type UIState =
   | 'error'        // Show error message
   | 'input'        // Text input mode
   | 'preview'      // Media preview (image/video with save/regenerate/close)
+  | 'ask'          // Agent asks user a question with clickable options
 
 // ─── Permission System ───
 
@@ -99,6 +104,18 @@ export interface PermissionConfig {
   [tool: string]: PermissionPolicy
 }
 
+// ─── Ask Protocol (Agent ↔ User communication) ───
+
+export interface AskOption {
+  label: string              // Display text shown to user (e.g. "选中的文字 (159字)")
+  value: string              // Machine-readable value (e.g. "selected")
+}
+
+export interface AskRequest {
+  question: string           // The question to display
+  options: AskOption[]       // 2-4 clickable options
+}
+
 // ─── IPC ───
 
 export interface RendererAPI {
@@ -112,6 +129,7 @@ export interface RendererAPI {
   setInteractive: (interactive: boolean) => Promise<void>
   hideWindow: () => Promise<void>
   answerPermission: (id: string, approved: boolean) => Promise<void>
+  answerAsk: (optionLabel: string) => Promise<void>
   resizeWindow: (height: number) => Promise<void>
   openInFolder: (filePath: string) => Promise<void>
   regenerateMedia: () => Promise<void>

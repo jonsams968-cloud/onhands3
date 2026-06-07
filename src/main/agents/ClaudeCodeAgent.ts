@@ -7,7 +7,7 @@ import type { Agent, AgentExecOptions } from './types'
  * Claude Code agent backend.
  *
  * Uses `claude -p` for non-interactive execution with stream-json output.
- * Runs with --dangerously-skip-permissions; user controls via abort button + live stream.
+ * Supports session resume via `claude -p --resume <session-id>`.
  */
 export class ClaudeCodeAgent implements Agent {
   readonly info: AgentInfo
@@ -17,8 +17,17 @@ export class ClaudeCodeAgent implements Agent {
   }
 
   async execute(prompt: string, opts?: AgentExecOptions): Promise<AgentSession> {
+    return this.run(prompt, opts)
+  }
+
+  async resume(sessionId: string, prompt: string, opts?: AgentExecOptions): Promise<AgentSession> {
+    console.log(`[agent] Resuming session: ${sessionId}`)
+    return this.run(prompt, opts, sessionId)
+  }
+
+  private async run(prompt: string, opts?: AgentExecOptions, resumeSessionId?: string): Promise<AgentSession> {
     const startTime = Date.now()
-    const args = this.buildArgs(opts)
+    const args = this.buildArgs(resumeSessionId)
     const cwd = opts?.workingDirectory || process.cwd()
 
     console.log(`[agent] Spawning: ${this.info.binaryPath} ${args.join(' ')}`)
@@ -39,11 +48,9 @@ export class ClaudeCodeAgent implements Agent {
           shell: true,     // Required for .cmd files on Windows
         })
 
-        // Explicitly decode child output as UTF-8 (data events emit strings)
         proc.stdout.setEncoding('utf8')
         proc.stderr.setEncoding('utf8')
 
-        // Notify caller so it can track the process for abort
         opts?.onProcessSpawn?.(proc as import('child_process').ChildProcess)
       } catch (err: any) {
         console.error(`[agent] Spawn failed: ${err.message}`)
@@ -55,6 +62,7 @@ export class ClaudeCodeAgent implements Agent {
       let stderr = ''
       let lastText = ''
       let eventCount = 0
+      let capturedSessionId = resumeSessionId || ''
 
       proc.stdout.on('data', (chunk: string) => {
         stdout += chunk
@@ -81,6 +89,7 @@ export class ClaudeCodeAgent implements Agent {
             } else if (type === 'result') {
               console.log(`[agent] Result: ${String(event.result || '').slice(0, 100)}`)
             } else if (type === 'system') {
+              if (event.session_id) capturedSessionId = event.session_id
               console.log(`[agent] System: session=${event.session_id || '?'}`)
             } else if (eventCount <= 3) {
               console.log(`[agent] Event #${eventCount}: type=${type}`)
@@ -108,6 +117,7 @@ export class ClaudeCodeAgent implements Agent {
           error: 'Timeout',
           exitCode: null,
           durationMs: Date.now() - startTime,
+          sessionId: capturedSessionId || undefined,
         })
       }, opts?.timeoutMs || 120_000)
 
@@ -123,6 +133,7 @@ export class ClaudeCodeAgent implements Agent {
           error: code !== 0 ? stderr.slice(0, 500) : undefined,
           exitCode: code,
           durationMs,
+          sessionId: capturedSessionId || undefined,
         })
       })
 
@@ -139,14 +150,18 @@ export class ClaudeCodeAgent implements Agent {
     })
   }
 
-  private buildArgs(): string[] {
-    return [
+  private buildArgs(resumeSessionId?: string): string[] {
+    const args = [
       '-p',                                   // Non-interactive print mode
       '--output-format', 'stream-json',       // Structured JSON on stdout
       '--verbose',                            // Show tool calls
       '--dangerously-skip-permissions',       // Skip per-tool approval
       '--max-turns', '12',                    // Allow enough turns for multi-file operations
     ]
+    if (resumeSessionId) {
+      args.push('--resume', resumeSessionId)
+    }
+    return args
   }
 
   private extractPlainText(stdout: string): string {

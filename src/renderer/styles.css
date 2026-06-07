@@ -89,6 +89,7 @@ html, body, #root {
   content: '';
   position: absolute;
   inset: -1px;
+  pointer-events: none;
   border-radius: var(--radius);
   padding: 1px;
   background: conic-gradient(
@@ -778,4 +779,88 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ── Ask Panel (agent asks user a question) ── */
+
+/* ─── Ask Panel ─── */
+
+.ask-panel {
+  animation: confirm-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ask-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ask-header .command-header {
+  flex: 1;
+}
+
+.ask-header .preview-btn--close {
+  flex-shrink: 0;
+}
+
+.ask-question {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  line-height: 1.4;
+  animation: result-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-option-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.ask-option-btn:hover {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.25);
+  color: var(--accent-light);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.1);
+}
+
+.ask-option-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent-light);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ask-option-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

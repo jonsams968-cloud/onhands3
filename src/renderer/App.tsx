@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useVoiceRecorder } from './hooks/useVoiceRecorder'
-import type { UIState, PermissionRequest } from '../shared/types'
+import type { UIState, PermissionRequest, AskRequest } from '../shared/types'
 import './styles.css'
 
 declare global {
@@ -10,6 +10,7 @@ declare global {
       onCommandText: (cb: (text: string) => void) => () => void
       onStreamChunk: (cb: (chunk: string) => void) => () => void
       onPermissionRequest: (cb: (req: PermissionRequest) => void) => () => void
+      onAskRequest: (cb: (req: AskRequest) => void) => () => void
       sendRecording: (base64Audio: string) => Promise<void>
       sendRecordingError: (error: string) => Promise<void>
       textCommand: (text: string) => Promise<void>
@@ -17,6 +18,7 @@ declare global {
       setInteractive: (interactive: boolean) => Promise<void>
       hideWindow: () => Promise<void>
       answerPermission: (id: string, approved: boolean) => Promise<void>
+      answerAsk: (optionLabel: string) => Promise<void>
       resizeWindow: (height: number) => Promise<void>
       openInFolder: (filePath: string) => Promise<void>
       regenerateMedia: () => Promise<void>
@@ -32,6 +34,7 @@ export default function App() {
   const [streamLines, setStreamLines] = useState<string[]>([])
   const [routeMode, setRouteMode] = useState<string>('')
   const [permission, setPermission] = useState<PermissionRequest | null>(null)
+  const [askRequest, setAskRequest] = useState<AskRequest | null>(null)
   const [countdown, setCountdown] = useState(15)
   const [visible, setVisible] = useState(false)
   const [exiting, setExiting] = useState(false)
@@ -46,6 +49,7 @@ export default function App() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const stateRef = useRef<UIState>('hidden')
   const prevState = useRef<UIState>('hidden')
+  const interactiveRef = useRef(false)  // Track last sent interactive state to avoid IPC spam
 
   useEffect(() => { stateRef.current = state }, [state])
 
@@ -62,6 +66,7 @@ export default function App() {
       if (countdownRef.current) clearInterval(countdownRef.current)
 
       prevState.current = stateRef.current
+      stateRef.current = s          // Sync immediately — mousemove handler reads this
       setMessage(d || '')
       setState(s)
 
@@ -73,6 +78,7 @@ export default function App() {
           setStreamLines([])
           setRouteMode('')
           setPermission(null)
+          setAskRequest(null)
           setCommandText('')
           setPreviewData(null)
           setSavedPath(null)
@@ -83,7 +89,16 @@ export default function App() {
 
       setVisible(true)
       setExiting(false)
-      // Don't setInteractive(true) here — mousemove handler controls it
+
+      // Ask/confirm states need immediate interactivity (user must click buttons)
+      if (s === 'ask' || s === 'confirm') {
+        interactiveRef.current = true
+        window.onhands.setInteractive(true)
+      }
+      // Other states: mousemove handler controls interactivity
+
+      // Ask data arrives atomically with state-changed (single IPC)
+      // (also parsed in render from message for reliability)
 
       if (s === 'routing' && d) setRouteMode(d)
 
@@ -137,8 +152,6 @@ export default function App() {
     })
   }, [])
 
-  // ─── Command text (persistent across pipeline states) ───
-
   useEffect(() => {
     return window.onhands.onCommandText((text) => {
       if (text) setCommandText(text)
@@ -150,9 +163,15 @@ export default function App() {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (stateRef.current === 'hidden') return
+      // Ask/confirm states stay fully interactive
+      if (stateRef.current === 'ask' || stateRef.current === 'confirm') return
       const el = document.elementFromPoint(e.clientX, e.clientY)
       const isOverContent = el?.closest('.capsule') != null
-      window.onhands.setInteractive(isOverContent)
+      // Only send IPC when value actually changes — prevents IPC spam that blocks ask interactivity
+      if (interactiveRef.current !== isOverContent) {
+        interactiveRef.current = isOverContent
+        window.onhands.setInteractive(isOverContent)
+      }
     }
     window.addEventListener('mousemove', handleMouseMove)
     return () => window.removeEventListener('mousemove', handleMouseMove)
@@ -177,6 +196,9 @@ export default function App() {
       }, 1000)
     })
   }, [])
+
+  // ─── Ask data now arrives via state-changed IPC (atomic) ───
+  // No separate onAskRequest listener needed
 
   // ─── ESC to close preview ───
 
@@ -224,6 +246,11 @@ export default function App() {
     window.onhands.textCommand(text)
   }, [inputText])
 
+  const handleAskAnswer = useCallback((optionLabel: string) => {
+    setAskRequest(null)
+    window.onhands.answerAsk(optionLabel)
+  }, [])
+
   const handleAbort = useCallback(() => { window.onhands.abortAction() }, [])
 
   // ─── Render ───
@@ -234,6 +261,7 @@ export default function App() {
     'capsule',
     state === 'recording' && 'capsule--recording',
     state === 'processing' && 'capsule--processing',
+    state === 'ask' && 'capsule--processing',
     state === 'result' && 'capsule--result',
     state === 'error' && 'capsule--error',
     state === 'preview' && 'capsule--result',
@@ -365,6 +393,39 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* ── Ask (Agent asks user a question) ── */}
+        {state === 'ask' && message && (() => {
+          try {
+            const askData = JSON.parse(message)
+            if (!askData.question || !askData.options) return null
+            return (
+              <div className="ask-panel">
+                <div className="ask-header">
+                  {commandText && <div className="command-header">{commandText}</div>}
+                  <button className="preview-btn preview-btn--close" onClick={handleAbort} title="取消">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+                <div className="ask-question">{askData.question}</div>
+                <div className="ask-options">
+                  {askData.options.map((opt: any, i: number) => (
+                    <button
+                      key={i}
+                      className="ask-option-btn"
+                      onClick={() => handleAskAnswer(opt.label)}
+                    >
+                      <span className="ask-option-num">{i + 1}</span>
+                      <span className="ask-option-label">{opt.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          } catch { return null }
+        })()}
 
         {/* ── Result ── */}
         {state === 'result' && (

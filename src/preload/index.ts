@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('onhands', {
     ipcRenderer.on('permission-request', handler)
     return () => ipcRenderer.removeListener('permission-request', handler)
   },
+  onAskRequest: (cb: (req: any) => void) => {
+    const handler = (_e: any, req: any) => cb(req)
+    ipcRenderer.on('ask-request', handler)
+    return () => ipcRenderer.removeListener('ask-request', handler)
+  },
   sendRecording: (base64: string) => ipcRenderer.invoke('voice:recording', base64),
   sendRecordingError: (error: string) => ipcRenderer.invoke('voice:error', error),
   textCommand: (text: string) => ipcRenderer.invoke('text:command', text),
@@ -28,6 +33,7 @@ contextBridge.exposeInMainWorld('onhands', {
   setInteractive: (v: boolean) => ipcRenderer.invoke('window:interactive', v),
   hideWindow: () => ipcRenderer.invoke('window:hide'),
   answerPermission: (id: string, approved: boolean) => ipcRenderer.invoke('permission:answer', id, approved),
+  answerAsk: (optionLabel: string) => ipcRenderer.invoke('ask:answer', optionLabel),
   resizeWindow: (height: number) => ipcRenderer.invoke('window:resize', height),
   openInFolder: (filePath: string) => ipcRenderer.invoke('media:openInFolder', filePath),
   regenerateMedia: () => ipcRenderer.invoke('media:regenerate'),
