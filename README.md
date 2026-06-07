@@ -235,6 +235,14 @@ src/
 
 ---
 
+## 致谢
+
+感谢以下开源项目的启发与参考：
+
+- [**Multica**](https://github.com/multica-ai/multica) — AI 桌面助手框架
+
+---
+
 ## License
 
 MIT

@@ -7,3 +7,4 @@ dist/
 Thumbs.db
 test-electron.js
 screenshot_*.png
+multica-main/
