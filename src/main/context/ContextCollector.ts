@@ -57,12 +57,12 @@ export class ContextCollector {
       await loadWin32()
 
       // Get HWND as void* for passing to other Win32 functions
-      // Retry up to 3 times with short delays — foreground window may not switch immediately
+      // Retry with increasing delays — foreground window may not switch immediately
       let hwndPtr: any = null
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 5; i++) {
         hwndPtr = _getForegroundWindowPtr()
         if (hwndPtr) break
-        await new Promise(r => setTimeout(r, 30))
+        await new Promise(r => setTimeout(r, 50))
       }
       if (!hwndPtr) {
         console.log('[context] GetForegroundWindow returned null after retries')

@@ -80,8 +80,11 @@ export class Orchestrator {
       if (this.win.isVisible()) {
         this.win.hide()
         this.win.setIgnoreMouseEvents(true, { forward: true })
-        await new Promise(r => setTimeout(r, 50))
       }
+
+      // Always wait before capture — OS needs time to settle foreground window
+      // even when overlay was already hidden (e.g. after abort)
+      await new Promise(r => setTimeout(r, 80))
 
       try {
         this.pendingWindow = await this.collector.captureActiveWindow()
@@ -494,25 +497,73 @@ export class Orchestrator {
     parts.push(``)
 
     if (isImage) {
-      parts.push(`## Image Generation API (agnes-image-2.1-flash)`)
-      parts.push(`Endpoint: POST ${baseUrl}/images/generations`)
-      parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
-      parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "...", "size": "1024x768", "return_base64": true }`)
-      parts.push(`Response: { "data": [{ "b64_json": "..." }] }`)
-      parts.push(``)
-      parts.push(`### Node.js script template:`)
-      parts.push(`const https = require('https'); const http = require('http'); const fs = require('fs');`)
-      parts.push(`const url = new URL('${baseUrl}/images/generations');`)
-      parts.push(`const body = JSON.stringify({model:'agnes-image-2.1-flash', prompt:'YOUR_PROMPT', size:'1024x768', return_base64:true});`)
-      parts.push(`const req = (url.protocol === 'https:' ? https : http).request({hostname:url.hostname, port:url.port, path:url.pathname, method:'POST', headers:{'Authorization':'Bearer ${apiKey}','Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}}, res => {`)
-      parts.push(`  let data=''; res.on('data',c=>data+=c); res.on('end',()=>{`)
-      parts.push(`    const r=JSON.parse(data); const b64=r.data[0].b64_json||r.data[0].url;`)
-      parts.push(`    if(b64.startsWith('http')){ http.get(b64,f=>{const s=fs.createWriteStream('SAVE_PATH');f.pipe(s);s.on('finish',()=>console.log('OK'))}); }`)
-      parts.push(`    else{ fs.writeFileSync('SAVE_PATH',Buffer.from(b64,'base64')); console.log('OK'); }`)
-      parts.push(`  });`)
-      parts.push(`});`)
-      parts.push(`req.on('error',e=>console.error(e.message)); req.write(body); req.end();`)
-      parts.push(``)
+      const isImageFile = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
+      const selectedImages = context.selectedFiles?.filter(isImageFile) || []
+      const isImg2Img = selectedImages.length > 0
+
+      if (isImg2Img) {
+        // Image-to-Image mode — editing an existing image
+        parts.push(`## Image Editing API — IMAGE-TO-IMAGE MODE (agnes-image-2.1-flash)`)
+        parts.push(`CRITICAL: The user selected an existing image to EDIT. You MUST use image-to-image, NOT text-to-image from scratch.`)
+        parts.push(`Endpoint: POST ${baseUrl}/images/generations`)
+        parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
+        parts.push(``)
+        parts.push(`Body for image-to-image:`)
+        parts.push(`{`)
+        parts.push(`  "model": "agnes-image-2.1-flash",`)
+        parts.push(`  "prompt": "EDIT_INSTRUCTION + ' while preserving the original composition'",`)
+        parts.push(`  "size": "1024x768",`)
+        parts.push(`  "extra_body": {`)
+        parts.push(`    "image": ["data:image/png;base64,BASE64_OF_SOURCE_IMAGE"],`)
+        parts.push(`    "response_format": "b64_json"`)
+        parts.push(`  }`)
+        parts.push(`}`)
+        parts.push(``)
+        parts.push(`Source image to edit (read as base64 → put in extra_body.image):`)
+        for (const f of selectedImages) {
+          parts.push(`- ${f}`)
+        }
+        parts.push(``)
+        parts.push(`### Node.js script template for img2img:`)
+        parts.push(`const https = require('https'); const http = require('http'); const fs = require('fs');`)
+        parts.push(`const url = new URL('${baseUrl}/images/generations');`)
+        parts.push(`const srcB64 = fs.readFileSync('SOURCE_IMAGE_PATH').toString('base64');`)
+        parts.push(`const body = JSON.stringify({model:'agnes-image-2.1-flash', prompt:'YOUR_EDIT_INSTRUCTION while preserving the original composition', size:'1024x768', extra_body:{image:['data:image/png;base64,'+srcB64], response_format:'b64_json'}});`)
+        parts.push(`const req = (url.protocol === 'https:' ? https : http).request({hostname:url.hostname, port:url.port, path:url.pathname, method:'POST', headers:{'Authorization':'Bearer ${apiKey}','Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}}, res => {`)
+        parts.push(`  let data=''; res.on('data',c=>data+=c); res.on('end',()=>{`)
+        parts.push(`    const r=JSON.parse(data); const b64=r.data[0].b64_json||r.data[0].url;`)
+        parts.push(`    if(b64&&b64.startsWith('http')){ http.get(b64,f=>{const s=fs.createWriteStream('SAVE_PATH');f.pipe(s);s.on('finish',()=>console.log('OK'))}); }`)
+        parts.push(`    else if(b64){ fs.writeFileSync('SAVE_PATH',Buffer.from(b64,'base64')); console.log('OK'); }`)
+        parts.push(`    else { console.error('No image data in response'); console.error(JSON.stringify(r).slice(0,500)); }`)
+        parts.push(`  });`)
+        parts.push(`});`)
+        parts.push(`req.on('error',e=>console.error(e.message)); req.write(body); req.end();`)
+        parts.push(``)
+        parts.push(`IMPORTANT: Always pass source image in extra_body.image. NEVER generate from scratch when editing.`)
+        parts.push(`Prompt MUST include "while preserving the original composition" to maintain image structure.`)
+        parts.push(``)
+      } else {
+        // Text-to-Image mode — generating from scratch
+        parts.push(`## Image Generation API (agnes-image-2.1-flash)`)
+        parts.push(`Endpoint: POST ${baseUrl}/images/generations`)
+        parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
+        parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "...", "size": "1024x768", "return_base64": true }`)
+        parts.push(`Response: { "data": [{ "b64_json": "..." }] }`)
+        parts.push(``)
+        parts.push(`### Node.js script template:`)
+        parts.push(`const https = require('https'); const http = require('http'); const fs = require('fs');`)
+        parts.push(`const url = new URL('${baseUrl}/images/generations');`)
+        parts.push(`const body = JSON.stringify({model:'agnes-image-2.1-flash', prompt:'YOUR_PROMPT', size:'1024x768', return_base64:true});`)
+        parts.push(`const req = (url.protocol === 'https:' ? https : http).request({hostname:url.hostname, port:url.port, path:url.pathname, method:'POST', headers:{'Authorization':'Bearer ${apiKey}','Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}}, res => {`)
+        parts.push(`  let data=''; res.on('data',c=>data+=c); res.on('end',()=>{`)
+        parts.push(`    const r=JSON.parse(data); const b64=r.data[0].b64_json||r.data[0].url;`)
+        parts.push(`    if(b64.startsWith('http')){ http.get(b64,f=>{const s=fs.createWriteStream('SAVE_PATH');f.pipe(s);s.on('finish',()=>console.log('OK'))}); }`)
+        parts.push(`    else{ fs.writeFileSync('SAVE_PATH',Buffer.from(b64,'base64')); console.log('OK'); }`)
+        parts.push(`  });`)
+        parts.push(`});`)
+        parts.push(`req.on('error',e=>console.error(e.message)); req.write(body); req.end();`)
+        parts.push(``)
+      }
     } else {
       const duration = this.router.parseVideoDuration(command)
       const frameRate = 24
@@ -550,11 +601,22 @@ export class Orchestrator {
     }
 
     if (context.selectedFiles && context.selectedFiles.length > 0) {
-      parts.push(`## Selected Files`)
-      for (const f of context.selectedFiles) {
-        parts.push(`- ${f}`)
+      const isImageFile = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
+      const imgFiles = context.selectedFiles.filter(isImageFile)
+      if (isImage && imgFiles.length > 0) {
+        parts.push(`## Source Images for Editing (USE THESE — do NOT ignore)`)
+        parts.push(`You MUST read these files as base64 and pass them in extra_body.image for image-to-image editing.`)
+        for (const f of imgFiles) {
+          parts.push(`- ${f}`)
+        }
+        parts.push(``)
+      } else {
+        parts.push(`## Selected Files`)
+        for (const f of context.selectedFiles) {
+          parts.push(`- ${f}`)
+        }
+        parts.push(``)
       }
-      parts.push(``)
     }
 
     if (context.clipboard) {
@@ -603,8 +665,16 @@ export class Orchestrator {
       parts.push(`4. Bash tool → rm -f "${this.mediaTempDir}/_gen.js"`)
       parts.push(`API: POST ${config.aiBaseUrl}/images/generations`)
       parts.push(`Headers: Authorization: Bearer ${config.aiApiKey}, Content-Type: application/json`)
+      parts.push(``)
+      parts.push(`### Text-to-Image (generating from scratch):`)
       parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "ENGLISH_PROMPT", "size": "1024x768", "return_base64": true }`)
-      parts.push(`Response: { "data": [{ "b64_json": "..." }] }`)
+      parts.push(``)
+      parts.push(`### Image-to-Image (editing an existing image — USE WHEN USER SELECTED AN IMAGE):`)
+      parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "EDIT_INSTRUCTION + 'while preserving the original composition'", "size": "1024x768", "extra_body": { "image": ["data:image/png;base64,BASE64_OF_SOURCE"], "response_format": "b64_json" } }`)
+      parts.push(`To get base64 of source: const b64 = fs.readFileSync('SOURCE_PATH').toString('base64')`)
+      parts.push(`IMPORTANT: When editing, ALWAYS pass source image in extra_body.image — NEVER generate from scratch.`)
+      parts.push(``)
+      parts.push(`Response: { "data": [{ "b64_json": "..." }] } or { "data": [{ "url": "https://..." }] }`)
       parts.push(`Save to: ${this.mediaTempDir}/agnes_image_TIMESTAMP.png`)
       parts.push(`After saving, include this EXACT marker: [ONHANDS_MEDIA:image:FULL_FILE_PATH]`)
       parts.push(`NEVER use PowerShell for API calls — use Node.js instead (avoids encoding issues).`)
@@ -623,18 +693,24 @@ export class Orchestrator {
       const isImage = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
       const imageFiles = context.selectedFiles.filter(isImage)
       if (imageFiles.length > 0) {
-        parts.push(`## User Selected Images (use as reference/input for image editing)`)
+        parts.push(`## User Selected Images — USE IMAGE-TO-IMAGE MODE`)
+        parts.push(`The user selected image files for editing. You MUST use image-to-image (NOT text-to-image from scratch).`)
+        parts.push(`To do img2img: read the file as base64, then include it in extra_body.image as a Data URI:`)
+        parts.push(`  "extra_body": { "image": ["data:image/png;base64,BASE64_CONTENT"], "response_format": "b64_json" }`)
+        parts.push(`Prompt MUST include "while preserving the original composition" to keep the image structure.`)
+        parts.push(`DO NOT generate from scratch — always pass the source image via extra_body.image.`)
+        parts.push(``)
         for (const f of imageFiles) {
           parts.push(`- ${f}`)
         }
-        parts.push(`Read these image files to understand their content before generating edits.`)
+        parts.push(``)
       } else {
         parts.push(`## User Selected Files (IMPORTANT)`)
         for (const f of context.selectedFiles) {
           parts.push(`- ${f}`)
         }
+        parts.push(``)
       }
-      parts.push(``)
     }
 
     if (context.selectedText) {
