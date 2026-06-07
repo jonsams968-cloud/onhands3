@@ -226,12 +226,15 @@ export class ContextCollector {
     if (lower.includes('terminal')) return
 
     try {
-      // Don't risk corrupting non-text clipboard (images, files)
+      // Skip if clipboard has binary image data (can't reliably restore)
       const formats = clipboard.availableFormats()
-      const hasNonText = formats.some(f => !f.startsWith('text/'))
-      if (hasNonText) return
+      const hasImage = formats.some(f => f.startsWith('image/'))
+      if (hasImage) return
 
-      const oldClip = clipboard.readText()
+      // Save ALL clipboard formats so we can fully restore after Ctrl+C
+      const savedText = clipboard.readText()
+      const savedHtml = clipboard.readHTML()
+      const savedRtf = clipboard.readRTF()
 
       // Wait for foreground window to fully receive focus after overlay hide
       const focusSAB = new SharedArrayBuffer(4)
@@ -250,14 +253,22 @@ export class ContextCollector {
       const sab = new SharedArrayBuffer(4)
       Atomics.wait(new Int32Array(sab), 0, 0, 300)
 
+      // Read the selected text, then IMMEDIATELY restore clipboard
       const newClip = clipboard.readText()
 
-      // Restore original clipboard
-      if (oldClip) clipboard.writeText(oldClip)
-      else clipboard.clear()
+      // Restore all original formats — minimizes disruption to user
+      const restoreData: Record<string, string> = {}
+      if (savedText) restoreData.text = savedText
+      if (savedHtml) restoreData.html = savedHtml
+      if (savedRtf) restoreData.rtf = savedRtf
+      if (Object.keys(restoreData).length > 0) {
+        clipboard.write(restoreData)
+      } else {
+        clipboard.clear()
+      }
 
       // If clipboard changed → it's the selected text
-      if (newClip && newClip !== oldClip) {
+      if (newClip && newClip !== savedText) {
         this.capturedSelectedText = newClip
         console.log(`[context] Selected text captured (${newClip.length} chars): "${newClip.slice(0, 60)}..."`)
       }
