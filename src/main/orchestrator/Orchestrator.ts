@@ -240,6 +240,7 @@ export class Orchestrator {
   }
 
   private async executePipeline(command: string, isRegenerate = false): Promise<void> {
+    // Route FIRST — Router only handles obvious cases, agent handles ambiguity
     const mode = this.router.decide(command)
     console.log(`[pipeline] "${command}" → mode: ${mode}`)
 
@@ -249,7 +250,7 @@ export class Orchestrator {
     let context: DesktopContext
     try {
       context = await this.collector.collect(this.pendingPosition.x, this.pendingPosition.y)
-      console.log(`[pipeline] Context: window=${context.activeWindow?.processName || 'none'}, workdir=${context.workingDirectory}, selectedText=${context.selectedText ? `${context.selectedText.length} chars` : 'none'}`)
+      console.log(`[pipeline] Context: window=${context.activeWindow?.processName || 'none'}, workdir=${context.workingDirectory}, selectedFiles=${context.selectedFiles?.length || 0}, selectedText=${context.selectedText ? `${context.selectedText.length} chars` : 'none'}`)
     } catch (err) {
       console.log(`[pipeline] Context collection failed: ${err}`)
       context = { activeWindow: null, clipboard: null, workingDirectory: process.cwd() }
@@ -595,6 +596,7 @@ export class Orchestrator {
 
   private buildAgentPrompt(command: string, context: DesktopContext, resolution: string): string {
     const parts: string[] = []
+    const config = loadConfig()
 
     parts.push(`You are OnHands, a desktop AI assistant running on Windows 11.`)
     parts.push(`Always respond in Simplified Chinese (简体中文).`)
@@ -612,6 +614,27 @@ export class Orchestrator {
     parts.push(`7. ALWAYS provide the ACTUAL result — not a description of what you did or will do.`)
     parts.push(`8. If a command fails TWICE in a row, STOP and try a different method.`)
     parts.push(``)
+
+    // Image generation capability — agent decides when to use it
+    const isImageFile = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
+    const hasImageContext = (context.selectedFiles?.some(isImageFile)) || context.selectedText
+
+    if (hasImageContext || true) {  // Always include so agent can handle any image request
+      parts.push(`## Image Generation Capability`)
+      parts.push(`If you determine the user wants to generate, edit, or modify an image, use the Agnes Image API via a Node.js script:`)
+      parts.push(`1. Write tool → save to "${this.mediaTempDir}/_gen.js"`)
+      parts.push(`2. The script should use Node.js https/http module to call the API`)
+      parts.push(`3. Bash tool → node "${this.mediaTempDir}/_gen.js"`)
+      parts.push(`4. Bash tool → rm -f "${this.mediaTempDir}/_gen.js"`)
+      parts.push(`API: POST ${config.aiBaseUrl}/images/generations`)
+      parts.push(`Headers: Authorization: Bearer ${config.aiApiKey}, Content-Type: application/json`)
+      parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "ENGLISH_PROMPT", "size": "1024x768", "return_base64": true }`)
+      parts.push(`Response: { "data": [{ "b64_json": "..." }] }`)
+      parts.push(`Save to: ${this.mediaTempDir}/agnes_image_TIMESTAMP.png`)
+      parts.push(`After saving, include this EXACT marker: [ONHANDS_MEDIA:image:FULL_FILE_PATH]`)
+      parts.push(`NEVER use PowerShell for API calls — use Node.js instead (avoids encoding issues).`)
+      parts.push(``)
+    }
 
     if (context.activeWindow) {
       parts.push(`## Current Environment`)

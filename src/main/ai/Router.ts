@@ -2,13 +2,13 @@ import type { ExecutionMode } from '../../shared/types'
 
 /**
  * Routing strategy:
- * - IMAGE: generate/edit images via Agnes Image 2.1 Flash (handled by agent)
- * - VIDEO: generate videos via Agnes Video V2.0 (handled by agent)
- * - DIRECT: fast text-only tasks via lightweight AI (translation, chat, simple Q&A)
- * - AGENT: everything else — file ops, coding, desktop, data, and unknown commands
+ * - IMAGE/VIDEO: explicit generation commands → agent with specialized media prompt
+ * - DIRECT: simple text-only tasks (translation, greetings)
+ * - AGENT: everything else — agent receives full context and decides intent itself
  *
- * Image/video commands are routed to the agent with specialized prompts
- * that include Agnes API documentation and credentials.
+ * The Router only handles OBVIOUS routing (explicit generation keywords).
+ * Intent classification for ambiguous commands is the agent's job —
+ * it receives selected files, selected text, and full desktop context.
  */
 
 const IMAGE_PATTERNS = [
