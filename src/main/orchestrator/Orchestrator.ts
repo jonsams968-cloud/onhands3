@@ -247,14 +247,9 @@ export class Orchestrator {
     // Use the window captured at longpress time
     this.collector.setCapturedWindow(this.pendingWindow)
 
-    let context: DesktopContext
-    try {
-      context = await this.collector.collect(this.pendingPosition.x, this.pendingPosition.y)
-      console.log(`[pipeline] Context: window=${context.activeWindow?.processName || 'none'}, workdir=${context.workingDirectory}, selectedFiles=${context.selectedFiles?.length || 0}, selectedText=${context.selectedText ? `${context.selectedText.length} chars` : 'none'}`)
-    } catch (err) {
-      console.log(`[pipeline] Context collection failed: ${err}`)
-      context = { activeWindow: null, clipboard: null, workingDirectory: process.cwd() }
-    }
+    // All context was captured at longpress time — just assemble it
+    const context: DesktopContext = this.collector.collect()
+    console.log(`[pipeline] Context: window=${context.activeWindow?.processName || 'none'}, workdir=${context.workingDirectory}, selectedFiles=${context.selectedFiles?.length || 0}, selectedText=${context.selectedText ? `${context.selectedText.length} chars` : 'none'}, screenshot=${context.screenshot ? 'yes' : 'no'}, clipboard=${context.clipboard ? `${context.clipboard.length} chars` : 'none'}`)
 
     if (this.aborted) return
 
@@ -279,30 +274,7 @@ export class Orchestrator {
 
       // Check if agent output contains a media marker
       if (result.success && result.output) {
-        const match = result.output.match(MEDIA_MARKER_RE)
-        if (match) {
-          const mediaType = match[1] as 'image' | 'video'
-          const filePath = match[2]
-          console.log(`[pipeline] Media generated: ${mediaType} at ${filePath}`)
-
-          if (fs.existsSync(filePath)) {
-            // Determine target save directory: user folder or Desktop
-            const appDir = path.resolve(process.cwd())
-            let targetDir = context.workingDirectory
-            if (!targetDir || path.resolve(targetDir) === appDir) {
-              targetDir = app.getPath('desktop')
-            }
-
-            const encodedPath = encodeURIComponent(filePath)
-            this.win.webContents.send('state-changed', 'preview', JSON.stringify({
-              type: mediaType,
-              path: filePath,
-              url: `onhands-media://${encodedPath}`,
-              saveDir: targetDir,
-            }))
-            return
-          }
-        }
+        if (this.tryShowMediaPreview(result.output, context)) return
       }
 
       // No media marker found — show as regular result
@@ -343,6 +315,9 @@ export class Orchestrator {
     if (this.aborted) return
 
     console.log(`[pipeline] Done: success=${result.success}, output=${result.output?.slice(0, 100)}, duration=${result.durationMs}ms`)
+
+    // Check for media marker in any mode — agent might generate images on its own
+    if (result.success && result.output && this.tryShowMediaPreview(result.output, context)) return
 
     if (result.success) {
       this.sendState('result', result.output)
@@ -645,9 +620,19 @@ export class Orchestrator {
     }
 
     if (context.selectedFiles && context.selectedFiles.length > 0) {
-      parts.push(`## User Selected Files (IMPORTANT)`)
-      for (const f of context.selectedFiles) {
-        parts.push(`- ${f}`)
+      const isImage = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
+      const imageFiles = context.selectedFiles.filter(isImage)
+      if (imageFiles.length > 0) {
+        parts.push(`## User Selected Images (use as reference/input for image editing)`)
+        for (const f of imageFiles) {
+          parts.push(`- ${f}`)
+        }
+        parts.push(`Read these image files to understand their content before generating edits.`)
+      } else {
+        parts.push(`## User Selected Files (IMPORTANT)`)
+        for (const f of context.selectedFiles) {
+          parts.push(`- ${f}`)
+        }
       }
       parts.push(``)
     }
@@ -671,6 +656,38 @@ export class Orchestrator {
   }
 
   // ─── Helpers ───
+
+  /**
+   * Check output for [ONHANDS_MEDIA:type:path] marker and show preview if found.
+   * Works for ANY execution mode — media pipeline or general agent.
+   * Returns true if preview was shown.
+   */
+  private tryShowMediaPreview(output: string, context: DesktopContext): boolean {
+    const match = output.match(MEDIA_MARKER_RE)
+    if (!match) return false
+
+    const mediaType = match[1] as 'image' | 'video'
+    const filePath = match[2]
+    console.log(`[pipeline] Media marker found: ${mediaType} at ${filePath}`)
+
+    if (!fs.existsSync(filePath)) return false
+
+    // Determine target save directory: user folder or Desktop
+    const appDir = path.resolve(process.cwd())
+    let targetDir = context.workingDirectory
+    if (!targetDir || path.resolve(targetDir) === appDir) {
+      targetDir = app.getPath('desktop')
+    }
+
+    const encodedPath = encodeURIComponent(filePath)
+    this.win.webContents.send('state-changed', 'preview', JSON.stringify({
+      type: mediaType,
+      path: filePath,
+      url: `onhands-media://${encodedPath}`,
+      saveDir: targetDir,
+    }))
+    return true
+  }
 
   private async transcribe(base64Audio: string): Promise<string> {
     if (!this.stt) {

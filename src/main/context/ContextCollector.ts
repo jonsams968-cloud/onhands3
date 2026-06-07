@@ -36,6 +36,8 @@ export class ContextCollector {
   private capturedWorkingDir: string | null = null
   private capturedSelectedFiles: string[] | null = null
   private capturedSelectedText: string | null = null
+  private capturedScreenshot: string | undefined = undefined
+  private capturedClipboard: string | null = null
   private ownPid = process.pid
 
   /**
@@ -48,14 +50,22 @@ export class ContextCollector {
     this.capturedWorkingDir = null
     this.capturedSelectedFiles = null
     this.capturedSelectedText = null
+    this.capturedScreenshot = undefined
+    this.capturedClipboard = null
 
     try {
       await loadWin32()
 
       // Get HWND as void* for passing to other Win32 functions
-      const hwndPtr = _getForegroundWindowPtr()
+      // Retry up to 3 times with short delays — foreground window may not switch immediately
+      let hwndPtr: any = null
+      for (let i = 0; i < 3; i++) {
+        hwndPtr = _getForegroundWindowPtr()
+        if (hwndPtr) break
+        await new Promise(r => setTimeout(r, 30))
+      }
       if (!hwndPtr) {
-        console.log('[context] GetForegroundWindow returned null')
+        console.log('[context] GetForegroundWindow returned null after retries')
         return null
       }
 
@@ -132,6 +142,17 @@ export class ContextCollector {
         }
       }
 
+      // Capture screenshot and clipboard NOW (at longpress time, before overlay shows)
+      // These run in parallel with each other
+      const [screenshot, clipboardText] = await Promise.all([
+        this.captureWindowScreenshot(title).catch(() => undefined),
+        this.readClipboard().catch(() => null),
+      ])
+      this.capturedScreenshot = screenshot
+      this.capturedClipboard = clipboardText
+      if (screenshot) console.log(`[context] Screenshot captured (${Math.round(screenshot.length * 0.75 / 1024)}KB)`)
+      if (clipboardText) console.log(`[context] Clipboard captured (${clipboardText.length} chars)`)
+
       return result
     } catch (err) {
       console.error(`[context] Window capture failed: ${err}`)
@@ -139,16 +160,15 @@ export class ContextCollector {
     }
   }
 
-  async collect(pressX = 0, pressY = 0): Promise<DesktopContext> {
-    const [screenshot, clipboard] = await Promise.all([
-      this.captureScreen().catch(() => undefined),
-      this.readClipboard().catch(() => null),
-    ])
-
+  /**
+   * Assemble the captured context. All data was already collected at longpress time.
+   * This is now synchronous — safe to call at any point after captureActiveWindow().
+   */
+  collect(): DesktopContext {
     return {
-      screenshot,
+      screenshot: this.capturedScreenshot,
       activeWindow: this.capturedWindow,
-      clipboard,
+      clipboard: this.capturedClipboard,
       workingDirectory: this.capturedWorkingDir || process.cwd(),
       selectedFiles: this.capturedSelectedFiles || undefined,
       selectedText: this.capturedSelectedText || undefined,
@@ -358,6 +378,33 @@ export class ContextCollector {
     }
 
     return null
+  }
+
+  /**
+   * Capture screenshot of the active window (not full screen).
+   * Uses desktopCapturer with 'window' type, matching by title.
+   * Falls back to full screen if window capture fails.
+   */
+  private async captureWindowScreenshot(title: string): Promise<string | undefined> {
+    // Try window-specific capture first
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 1920, height: 1080 },
+      })
+      // Match by title (partial match for long titles)
+      const match = sources.find(s =>
+        s.name && title && (title.includes(s.name) || s.name.includes(title))
+      )
+      if (match && match.thumbnail && !match.thumbnail.isEmpty()) {
+        return match.thumbnail.toPNG().toString('base64')
+      }
+    } catch (err) {
+      console.log(`[context] Window screenshot failed, trying full screen: ${err}`)
+    }
+
+    // Fallback: full screen
+    return this.captureScreen()
   }
 
   private async captureScreen(): Promise<string | undefined> {
