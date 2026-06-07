@@ -4,6 +4,11 @@
 // cross-env and `set VAR=` don't reliably delete it — only `delete` works.
 delete process.env.ELECTRON_RUN_AS_NODE
 
+// Set terminal code page to UTF-8 so Chinese characters display correctly
+try {
+  require('child_process').execSync('chcp 65001', { stdio: 'ignore' })
+} catch {}
+
 const { spawn } = require('child_process')
 const child = spawn('npx', ['electron-vite', 'dev'], {
   stdio: 'inherit',

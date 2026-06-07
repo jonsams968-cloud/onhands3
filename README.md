@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/name.png" alt="OnHands" width="480" />
+</p>
+
 # OnHands3
 
 **AI 驱动的智能光标** — 鼠标长按触发语音/文字指令，由 AI Agent 执行桌面操作。

@@ -111,8 +111,25 @@ export class Orchestrator {
     })
 
     ipcMain.handle('voice:error', async (_e: any, error: string) => {
-      console.error(`[stt] Recording error: ${error}`)
-      this.sendState('error', '麦克风不可用')
+      // Clear misfire timer — voice handler responded (even if error)
+      if (this.misfireTimer) { clearTimeout(this.misfireTimer); this.misfireTimer = null }
+
+      if (error === 'silence') {
+        // Mic off / no speech detected — show friendly message instead of executing
+        console.log('[voice] No speech detected — silence')
+        this.isProcessing = false
+        this.isRecording = false
+        this.sendState('result', '没听到声音，请重试')
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+          if (!this.isProcessing) this.sendState('hidden')
+        }, 3000)
+      } else {
+        console.error(`[stt] Recording error: ${error}`)
+        this.isProcessing = false
+        this.isRecording = false
+        this.sendState('error', '麦克风不可用')
+      }
     })
 
     // IPC: text command
@@ -321,10 +338,14 @@ export class Orchestrator {
     parts.push(`   NOTE: New-Item does NOT support -LiteralPath. Use -Path with double-quoted Chinese paths: New-Item -Path "文件夹" -ItemType Directory`)
     parts.push(`5. NEVER write .ps1 script files. NEVER use the Write tool for scripts. Always use inline one-liners.`)
     parts.push(`6. Execute DIRECTLY. Do NOT ask for permission.`)
-    parts.push(`7. After executing, verify the result, then respond in Chinese.`)
-    parts.push(`8. When moving/renaming files, first verify source exists, then execute. If moving multiple files to a NEW folder, create the folder FIRST, then move.`)
-    parts.push(`9. NEVER create files named NUL, CON, PRN, AUX, COM1-9, LPT1-9 — these are Windows reserved device names and will cause permanent undeletable files.`)
-    parts.push(`10. If a command fails TWICE in a row with the same approach, STOP and try a completely different method. Do NOT repeat the same failing command.`)
+    parts.push(`7. ALWAYS provide the ACTUAL result — not a description of what you did or will do.`)
+    parts.push(`   Translation → output the translated text directly`)
+    parts.push(`   Question → answer directly`)
+    parts.push(`   File operation → confirm what was done with the result`)
+    parts.push(`8. After executing, verify the result, then respond in Chinese.`)
+    parts.push(`9. When moving/renaming files, first verify source exists, then execute. If moving multiple files to a NEW folder, create the folder FIRST, then move.`)
+    parts.push(`10. NEVER create files named NUL, CON, PRN, AUX, COM1-9, LPT1-9 — these are Windows reserved device names and will cause permanent undeletable files.`)
+    parts.push(`11. If a command fails TWICE in a row with the same approach, STOP and try a completely different method. Do NOT repeat the same failing command.`)
     parts.push(``)
     parts.push(`## Correct Examples`)
     parts.push(`List:      powershell.exe -NoProfile -Command '$OutputEncoding=[Console]::InputEncoding=[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding; Get-ChildItem | Select-Object Name'`)
