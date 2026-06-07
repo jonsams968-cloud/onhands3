@@ -656,10 +656,10 @@ export class Orchestrator {
       parts.push(`- 注册表/系统配置修改（reg、netsh、bcdedit）`)
       parts.push(`- 进程管理（taskkill、Stop-Process）`)
       parts.push(``)
-      parts.push(`请求方法（用 curl，一步完成，无需额外转义）：`)
-      parts.push(`  curl -s -X POST http://127.0.0.1:${this.permissionServer.port}/permission -H "Content-Type: application/json" -d '{"tool":"工具名","description":"简短描述","detail":"完整命令"}'`)
-      parts.push(`  返回 {"approved":true} 表示允许，{"approved":false} 表示拒绝（停止并告知用户）`)
-      parts.push(`  注意：直接复制模板，只替换 tool/description/detail 的值`)
+      parts.push(`请求方法（用 node，支持中文，无转义问题）：`)
+      parts.push(`  node -e "fetch('http://127.0.0.1:${this.permissionServer.port}/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:'工具名',description:'简短描述',detail:'完整命令'})}).then(r=>r.json()).then(d=>console.log(d.approved))"`)
+      parts.push(`  返回 true 表示允许，false 表示拒绝（停止并告知用户）`)
+      parts.push(`  注意：直接复制模板，只替换 tool/description/detail 的值，中文没问题`)
       parts.push(``)
     }
 
@@ -771,10 +771,10 @@ export class Orchestrator {
       parts.push(`- 注册表/系统配置修改（reg、netsh、bcdedit）`)
       parts.push(`- 进程管理（taskkill、Stop-Process）`)
       parts.push(``)
-      parts.push(`请求方法（用 curl，一步完成，无需额外转义）：`)
-      parts.push(`  curl -s -X POST http://127.0.0.1:${this.permissionServer.port}/permission -H "Content-Type: application/json" -d '{"tool":"工具名","description":"简短描述","detail":"完整命令"}'`)
-      parts.push(`  返回 {"approved":true} 表示允许，{"approved":false} 表示拒绝（停止并告知用户）`)
-      parts.push(`  注意：直接复制模板，只替换 tool/description/detail 的值`)
+      parts.push(`请求方法（用 node，支持中文，无转义问题）：`)
+      parts.push(`  node -e "fetch('http://127.0.0.1:${this.permissionServer.port}/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:'工具名',description:'简短描述',detail:'完整命令'})}).then(r=>r.json()).then(d=>console.log(d.approved))"`)
+      parts.push(`  返回 true 表示允许，false 表示拒绝（停止并告知用户）`)
+      parts.push(`  注意：直接复制模板，只替换 tool/description/detail 的值，中文没问题`)
       parts.push(``)
     }
 

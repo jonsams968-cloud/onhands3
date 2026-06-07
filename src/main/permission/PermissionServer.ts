@@ -77,9 +77,11 @@ export class PermissionServer {
   }
 
   private handlePermissionRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    let body = ''
-    req.on('data', (chunk) => { body += chunk })
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
     req.on('end', () => {
+      // Explicitly decode as UTF-8 — Windows bash/curl may send in GBK
+      const body = Buffer.concat(chunks).toString('utf-8')
       let parsed: PermissionRequestBody
       try {
         parsed = JSON.parse(body)
