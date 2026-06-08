@@ -6,6 +6,7 @@ import * as path from 'path'
 import { MouseMonitor } from '../input/MouseMonitor'
 import { SelectionMonitor } from '../input/SelectionMonitor'
 import { ContextCollector } from '../context/ContextCollector'
+import { RecentHistory } from '../history/RecentHistory'
 import { Router } from '../ai/Router'
 import { DirectAI } from '../ai/DirectAI'
 import { AgentDetector } from '../agents/AgentDetector'
@@ -92,6 +93,10 @@ export class Orchestrator {
 
   // Permission system
   private permissionServer: PermissionServer | null = null
+
+  // Phase 1: Recent history + processing timeout
+  private history = new RecentHistory()
+  private processingTimer: ReturnType<typeof setTimeout> | null = null
 
   // Ask protocol state
   private askDepth = 0                  // Max 2 nested ASK rounds
@@ -243,6 +248,7 @@ export class Orchestrator {
     this.isProcessing = true
     this.aborted = false
     this.sendCommandText(text)
+    this.startProcessingTimeout()
     try {
       await this.executePipeline(text)
     } catch (err) {
@@ -251,6 +257,7 @@ export class Orchestrator {
       }
     } finally {
       this.isProcessing = false
+      this.clearProcessingTimeout()
     }
   }
 
@@ -303,6 +310,7 @@ export class Orchestrator {
     }
     this.isProcessing = true
     this.aborted = false
+    this.startProcessingTimeout()
     try {
       this.streamChunk('[system] 语音转文字中...')
 
@@ -328,6 +336,7 @@ export class Orchestrator {
       }
     } finally {
       this.isProcessing = false
+      this.clearProcessingTimeout()
     }
   }
 
@@ -366,10 +375,14 @@ export class Orchestrator {
 
       // Check if agent output contains a media marker
       if (result.success && result.output) {
-        if (this.tryShowMediaPreview(result.output, context)) return
+        if (this.tryShowMediaPreview(result.output, context)) {
+          this.history.add({ timestamp: Date.now(), command, resultSummary: `${mode} generated successfully`, sourceWindow: context.activeWindow?.processName || 'unknown', mode })
+          return
+        }
       }
 
       // No media marker found — show as regular result
+      this.history.add({ timestamp: Date.now(), command, resultSummary: (result.success ? result.output : result.error || 'Failed').slice(0, 200), sourceWindow: context.activeWindow?.processName || 'unknown', mode })
       if (result.success) {
         this.sendState('result', result.output)
       } else {
@@ -413,6 +426,15 @@ export class Orchestrator {
     }
 
     console.log(`[pipeline] Done: success=${result.success}, output=${result.output?.slice(0, 100)}, duration=${result.durationMs}ms`)
+
+    // Record to history (for follow-up context in future commands)
+    this.history.add({
+      timestamp: Date.now(),
+      command,
+      resultSummary: (result.success ? result.output : result.error || 'Failed').slice(0, 200),
+      sourceWindow: context.activeWindow?.processName || 'unknown',
+      mode,
+    })
 
     // Check for media marker in any mode — agent might generate images on its own
     if (result.success && result.output && this.tryShowMediaPreview(result.output, context)) return
@@ -587,6 +609,13 @@ export class Orchestrator {
 
     this.currentAgentProcess = null
     console.log(`[pipeline] Agent result: exitCode=${session.exitCode}, output=${session.output?.slice(0, 100)}`)
+
+    // Crash detection: non-zero exit with no meaningful output
+    if (session.exitCode !== 0 && session.exitCode !== null) {
+      const crashMsg = session.error || `Agent 进程异常退出 (code=${session.exitCode})`
+      console.warn(`[pipeline] Agent crash: ${crashMsg}`)
+      return { success: false, output: crashMsg, durationMs: session.durationMs, error: crashMsg }
+    }
 
     let output = session.output
     if (!output || output.length < 10) {
@@ -787,6 +816,13 @@ export class Orchestrator {
       parts.push(``)
     }
 
+    // Inject recent history (for follow-up context like "再生成一张")
+    const mediaHistory = this.history.formatForPrompt()
+    if (mediaHistory) {
+      parts.push(mediaHistory)
+      parts.push(``)
+    }
+
     parts.push(`## User Command`)
     parts.push(command)
 
@@ -913,6 +949,13 @@ export class Orchestrator {
       parts.push(``)
     }
 
+    // Inject recent history (for follow-up context)
+    const historySection = this.history.formatForPrompt()
+    if (historySection) {
+      parts.push(historySection)
+      parts.push(``)
+    }
+
     parts.push(`## User Command`)
     parts.push(command)
 
@@ -957,9 +1000,40 @@ export class Orchestrator {
     if (!this.stt) {
       const { createSTT } = await import('../stt/WhisperSTT')
       const config = loadConfig()
-      this.stt = createSTT(config.sttMode, config.aiApiKey, config.dataDir, config.whisperModel)
+      this.stt = createSTT(config.sttMode, config)
     }
-    return this.stt.transcribe(base64Audio)
+    try {
+      return await this.stt.transcribe(base64Audio)
+    } catch (err: any) {
+      // Cloud/Tencent STT failed — try local whisper as fallback
+      const config = loadConfig()
+      if (config.sttMode !== 'local') {
+        console.warn(`[stt] ${config.sttMode} failed: ${err.message} — trying local whisper`)
+        try {
+          const { createSTT } = await import('../stt/WhisperSTT')
+          const localSTT = createSTT('local', config)
+          const result = await localSTT.transcribe(base64Audio)
+          if (result.trim()) return result
+        } catch (localErr: any) {
+          console.error(`[stt] Local fallback also failed: ${localErr.message}`)
+        }
+      }
+      throw err
+    }
+  }
+
+  /** Start a 5-minute processing timeout to prevent permanent hangs */
+  private startProcessingTimeout(): void {
+    this.clearProcessingTimeout()
+    this.processingTimer = setTimeout(() => {
+      console.warn('[orchestrator] Processing timeout (5min) — auto-resetting')
+      this.sendState('error', '操作超时，已自动终止')
+      this.abort()
+    }, 5 * 60 * 1000)
+  }
+
+  private clearProcessingTimeout(): void {
+    if (this.processingTimer) { clearTimeout(this.processingTimer); this.processingTimer = null }
   }
 
   private sendState(state: UIState, data?: string): void {
@@ -1176,6 +1250,7 @@ export class Orchestrator {
     console.log('[orchestrator] Abort triggered')
     this.permissionServer?.rejectAll()
     this.unregisterEscHandler()
+    this.clearProcessingTimeout()
     this.aborted = true
 
     if (this.currentAgentProcess) {
@@ -1218,6 +1293,7 @@ export class Orchestrator {
   destroy(): void {
     this.permissionServer?.stop()
     this.selectionMonitor.destroy()
+    this.clearProcessingTimeout()
     this.unregisterEscHandler()
     if (this.currentAgentProcess) {
       const pid = this.currentAgentProcess.pid

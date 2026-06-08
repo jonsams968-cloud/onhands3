@@ -116,6 +116,16 @@ export interface AskRequest {
   options: AskOption[]       // 2-4 clickable options
 }
 
+// ─── Recent History (Phase 1.3) ───
+
+export interface HistoryEntry {
+  timestamp: number
+  command: string
+  resultSummary: string       // Truncated result, max 200 chars
+  sourceWindow: string        // processName of the active window
+  mode: ExecutionMode
+}
+
 // ─── IPC ───
 
 export interface RendererAPI {

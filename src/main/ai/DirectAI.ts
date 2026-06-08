@@ -71,7 +71,13 @@ export class DirectAI {
       if (err.name === 'AbortError') {
         return { success: false, output: '', durationMs: Date.now() - startTime, error: 'Aborted' }
       }
-      return { success: false, output: '', durationMs: Date.now() - startTime, error: err.message }
+      const code = err.cause?.code
+      const msg = code === 'ENOTFOUND' || code === 'ECONNREFUSED'
+        ? '网络不可用，请检查网络连接'
+        : code === 'ETIMEDOUT'
+          ? '请求超时，请稍后重试'
+          : `AI API 错误: ${err.message}`
+      return { success: false, output: '', durationMs: Date.now() - startTime, error: msg }
     }
   }
 

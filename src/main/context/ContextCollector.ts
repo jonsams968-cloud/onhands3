@@ -96,28 +96,7 @@ export class ContextCollector {
       const result = { processName: processName || '', title, pid }
       console.log(`[context] Captured: ${processName} — "${title.slice(0, 60)}" (pid=${pid}, hwnd=${hwndNum})`)
 
-      // For Explorer: query Shell COM once for folder path + selected files
-      if (processName?.toLowerCase() === 'explorer') {
-        const ctx = this.queryExplorerContext(hwndNum)
-        if (ctx.dir) {
-          this.capturedWorkingDir = ctx.dir
-          console.log(`[context] Explorer working dir: ${ctx.dir}`)
-        } else {
-          // Fallback: try to parse from title
-          const parsedDir = this.parseExplorerTitle(title)
-          if (parsedDir) {
-            this.capturedWorkingDir = parsedDir
-            console.log(`[context] Explorer title dir: ${parsedDir}`)
-          }
-        }
-
-        if (ctx.files && ctx.files.length > 0) {
-          this.capturedSelectedFiles = ctx.files
-          console.log(`[context] Selected files: ${ctx.files.length} items — ${ctx.files.slice(0, 3).map(f => path.basename(f)).join(', ')}${ctx.files.length > 3 ? '...' : ''}`)
-        }
-      }
-
-      // For terminals: parse path from title
+      // Parse working directory from window title (synchronous, instant)
       if (processName?.toLowerCase() === 'windowsterminal' ||
           processName?.toLowerCase() === 'cmd' ||
           processName?.toLowerCase() === 'powershell') {
@@ -128,7 +107,6 @@ export class ContextCollector {
         }
       }
 
-      // For VS Code: parse folder from title
       if (processName?.toLowerCase() === 'code') {
         const match = title.match(/[-–—]\s*([A-Z]:\\[^\s]+)/i)
         if (match && fs.existsSync(match[1])) {
@@ -137,12 +115,32 @@ export class ContextCollector {
         }
       }
 
-      // Capture screenshot and clipboard NOW (at longpress time, before overlay shows)
-      // These run in parallel with each other
-      const [screenshot, clipboardText] = await Promise.all([
+      // Run all I/O-bound captures in parallel (Explorer Shell COM, screenshot, clipboard)
+      const [explorerCtx, screenshot, clipboardText] = await Promise.all([
+        processName?.toLowerCase() === 'explorer'
+          ? Promise.resolve(this.queryExplorerContext(hwndNum))
+          : Promise.resolve(null as { dir: string | null, files: string[] | null } | null),
         this.captureWindowScreenshot(title).catch(() => undefined),
         this.readClipboard().catch(() => null),
       ])
+
+      // Apply Explorer results
+      if (explorerCtx) {
+        if (explorerCtx.dir) {
+          this.capturedWorkingDir = explorerCtx.dir
+          console.log(`[context] Explorer working dir: ${explorerCtx.dir}`)
+        } else {
+          const parsedDir = this.parseExplorerTitle(title)
+          if (parsedDir) {
+            this.capturedWorkingDir = parsedDir
+            console.log(`[context] Explorer title dir: ${parsedDir}`)
+          }
+        }
+        if (explorerCtx.files && explorerCtx.files.length > 0) {
+          this.capturedSelectedFiles = explorerCtx.files
+          console.log(`[context] Selected files: ${explorerCtx.files.length} items — ${explorerCtx.files.slice(0, 3).map(f => path.basename(f)).join(', ')}${explorerCtx.files.length > 3 ? '...' : ''}`)
+        }
+      }
       this.capturedScreenshot = screenshot
       this.capturedClipboard = clipboardText
       if (screenshot) {

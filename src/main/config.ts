@@ -15,8 +15,13 @@ export interface Config {
   opencodePath: string
 
   // STT
-  sttMode: 'local' | 'cloud'
+  sttMode: 'local' | 'cloud' | 'tencent'
   whisperModel: 'tiny' | 'base' | 'medium' | 'large-v3' | 'large-v3-turbo'
+
+  // Tencent Cloud ASR
+  tencentSecretId: string
+  tencentSecretKey: string
+  tencentAppId: string
 
   // Input
   longPressDuration: number
@@ -59,8 +64,12 @@ export function loadConfig(): Config {
     codexPath:       e.CODEX_PATH || '',
     opencodePath:    e.OPENCODE_PATH || '',
 
-    sttMode:         (e.STT_MODE as 'local' | 'cloud') || 'cloud',
+    sttMode:         (e.STT_MODE as 'local' | 'cloud' | 'tencent') || 'cloud',
     whisperModel:    (e.WHISPER_MODEL as any) || 'large-v3-turbo',
+
+    tencentSecretId:  e.TENCENT_SECRET_ID || '',
+    tencentSecretKey: e.TENCENT_SECRET_KEY || '',
+    tencentAppId:     e.TENCENT_APP_ID || '',
 
     longPressDuration: parseInt(e.LONG_PRESS_DURATION || '800'),
     dragThresholdPx:   parseInt(e.DRAG_THRESHOLD_PX || '15'),

@@ -1,18 +1,27 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { execFileUtf8 } from '../utils/spawn-utf8'
+import type { Config } from '../config'
+import { TencentASR } from './TencentASR'
 
 interface STTService {
   transcribe(base64Audio: string): Promise<string>
 }
 
-export function createSTT(mode: 'local' | 'cloud', apiKey: string, dataDir: string, model: string): STTService {
-  // Prefer cloud if OPENAI_API_KEY is available
-  const openaiKey = process.env.OPENAI_API_KEY || apiKey
-  if (mode === 'cloud' || (!apiKey && openaiKey)) {
+export function createSTT(mode: 'local' | 'cloud' | 'tencent', config: Config): STTService {
+  // Tencent real-time ASR via WebSocket
+  if (mode === 'tencent') {
+    return new TencentASR(config)
+  }
+
+  // Cloud Whisper (OpenAI API)
+  const openaiKey = process.env.OPENAI_API_KEY || config.aiApiKey
+  if (mode === 'cloud' || (!config.aiApiKey && openaiKey)) {
     return new CloudWhisper(openaiKey)
   }
-  return new LocalWhisper(dataDir, model)
+
+  // Local whisper.cpp
+  return new LocalWhisper(config.dataDir, config.whisperModel)
 }
 
 class LocalWhisper implements STTService {

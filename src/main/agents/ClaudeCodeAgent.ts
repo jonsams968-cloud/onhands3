@@ -121,17 +121,18 @@ export class ClaudeCodeAgent implements Agent {
         })
       }, opts?.timeoutMs || 120_000)
 
-      proc.on('close', (code: number) => {
+      proc.on('close', (code: number | null, signal: string | null) => {
         clearTimeout(timeout)
+        const effectiveCode = code ?? (signal ? -1 : 0)
         const result = lastText || this.extractPlainText(stdout)
         const durationMs = Date.now() - startTime
-        console.log(`[agent] Exited: code=${code}, duration=${durationMs}ms, events=${eventCount}`)
+        console.log(`[agent] Exited: code=${effectiveCode}${signal ? ` signal=${signal}` : ''}, duration=${durationMs}ms, events=${eventCount}`)
         if (stderr) console.log(`[agent] stderr tail: ${stderr.slice(-300)}`)
 
         resolve({
           output: result || (stderr ? `Error: ${stderr.slice(0, 500)}` : 'No output'),
-          error: code !== 0 ? stderr.slice(0, 500) : undefined,
-          exitCode: code,
+          error: effectiveCode !== 0 ? (stderr.slice(0, 500) || `Process killed${signal ? ` (signal=${signal})` : ''}`) : undefined,
+          exitCode: effectiveCode,
           durationMs,
           sessionId: capturedSessionId || undefined,
         })
