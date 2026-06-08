@@ -4,7 +4,7 @@
 
 <h1 align="center">OnHands3</h1>
 
-<p align="center"><strong>AI 驱动的智能光标</strong> — 鼠标长按触发语音/文字指令，由 AI Agent 执行桌面操作。</p>
+<p align="center"><strong>AI 驱动的智能光标</strong> — 面向未来的桌面交互方式。</p>
 
 <p align="center">
   <img src="assets/name.png" alt="OnHands" width="360" />
