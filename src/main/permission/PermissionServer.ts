@@ -101,7 +101,7 @@ export class PermissionServer {
 
       console.log(`[permission] Request ${id}: ${parsed.tool} — ${parsed.description}`)
 
-      // Send to renderer via IPC
+      // Send to renderer via IPC and make window interactive
       if (!this.win.isDestroyed()) {
         this.win.webContents.send('permission-request', {
           id,
@@ -109,6 +109,11 @@ export class PermissionServer {
           description: parsed.description,
           detail: parsed.detail,
         })
+
+        // Make overlay clickable, focused, and on top so user can respond
+        this.win.setIgnoreMouseEvents(false)
+        this.win.focus()
+        this.win.moveTop()
       }
 
       // Block HTTP response until user decides or timeout
