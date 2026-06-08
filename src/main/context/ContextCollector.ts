@@ -1,4 +1,4 @@
-import { screen, desktopCapturer, clipboard } from 'electron'
+import { screen, desktopCapturer } from 'electron'
 import { execFileSync } from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -11,8 +11,6 @@ let _getForegroundWindow: any = null
 let _getForegroundWindowPtr: any = null
 let _getWindowTextW: any = null
 let _getWindowThreadProcessId: any = null
-let _keybdEvent: any = null
-
 async function loadWin32(): Promise<void> {
   if (_user32) return
   const koffi = await import('koffi')
@@ -23,7 +21,6 @@ async function loadWin32(): Promise<void> {
   _getForegroundWindow = _user32.func('GetForegroundWindow', 'uint64', [])
   _getWindowTextW = _user32.func('GetWindowTextW', 'int', ['void *', 'void *', 'int'])
   _getWindowThreadProcessId = _user32.func('GetWindowThreadProcessId', 'uint32', ['void *', 'void *'])
-  _keybdEvent = _user32.func('keybd_event', 'void', ['uint8', 'uint8', 'uint32', 'uint64'])
 }
 
 /**
@@ -98,9 +95,6 @@ export class ContextCollector {
 
       const result = { processName: processName || '', title, pid }
       console.log(`[context] Captured: ${processName} — "${title.slice(0, 60)}" (pid=${pid}, hwnd=${hwndNum})`)
-
-      // Capture selected text via Ctrl+C simulation (before overlay steals focus)
-      this.captureSelectedText(processName)
 
       // For Explorer: query Shell COM once for folder path + selected files
       if (processName?.toLowerCase() === 'explorer') {
@@ -213,67 +207,13 @@ export class ContextCollector {
   // ---- Private helpers ----
 
   /**
-   * Capture selected text by briefly simulating Ctrl+C.
-   * Must be called while foreground window still has focus (before overlay shows).
-   * Saves and restores original clipboard content.
+   * Set selected text captured by SelectionMonitor (background accessibility API monitor).
+   * Called by Orchestrator after captureActiveWindow() with the latest selection.
    */
-  private captureSelectedText(processName: string | null): void {
-    if (!_keybdEvent) return
-
-    // Skip terminals where Ctrl+C sends SIGINT
-    const lower = (processName || '').toLowerCase()
-    if (['windowsterminal', 'cmd', 'powershell'].includes(lower)) return
-    if (lower.includes('terminal')) return
-
-    try {
-      // Skip if clipboard has binary image data (can't reliably restore)
-      const formats = clipboard.availableFormats()
-      const hasImage = formats.some(f => f.startsWith('image/'))
-      if (hasImage) return
-
-      // Save ALL clipboard formats so we can fully restore after Ctrl+C
-      const savedText = clipboard.readText()
-      const savedHtml = clipboard.readHTML()
-      const savedRtf = clipboard.readRTF()
-
-      // Wait for foreground window to fully receive focus after overlay hide
-      const focusSAB = new SharedArrayBuffer(4)
-      Atomics.wait(new Int32Array(focusSAB), 0, 0, 100)
-
-      // Send Ctrl+C
-      const VK_CONTROL = 0x11
-      const VK_C = 0x43
-      const KEYEVENTF_KEYUP = 0x0002
-      _keybdEvent(VK_CONTROL, 0, 0, BigInt(0))
-      _keybdEvent(VK_C, 0, 0, BigInt(0))
-      _keybdEvent(VK_C, 0, KEYEVENTF_KEYUP, BigInt(0))
-      _keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYUP, BigInt(0))
-
-      // Wait for clipboard to update
-      const sab = new SharedArrayBuffer(4)
-      Atomics.wait(new Int32Array(sab), 0, 0, 300)
-
-      // Read the selected text, then IMMEDIATELY restore clipboard
-      const newClip = clipboard.readText()
-
-      // Restore all original formats — minimizes disruption to user
-      const restoreData: Record<string, string> = {}
-      if (savedText) restoreData.text = savedText
-      if (savedHtml) restoreData.html = savedHtml
-      if (savedRtf) restoreData.rtf = savedRtf
-      if (Object.keys(restoreData).length > 0) {
-        clipboard.write(restoreData)
-      } else {
-        clipboard.clear()
-      }
-
-      // If clipboard changed → it's the selected text
-      if (newClip && newClip !== savedText) {
-        this.capturedSelectedText = newClip
-        console.log(`[context] Selected text captured (${newClip.length} chars): "${newClip.slice(0, 60)}..."`)
-      }
-    } catch (err) {
-      console.error(`[context] Selected text capture failed: ${err}`)
+  setSelectedText(text: string | null): void {
+    this.capturedSelectedText = text
+    if (text) {
+      console.log(`[context] Selected text set (${text.length} chars): "${text.slice(0, 60)}..."`)
     }
   }
 

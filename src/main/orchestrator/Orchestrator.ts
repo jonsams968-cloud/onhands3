@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { MouseMonitor } from '../input/MouseMonitor'
+import { SelectionMonitor } from '../input/SelectionMonitor'
 import { ContextCollector } from '../context/ContextCollector'
 import { Router } from '../ai/Router'
 import { DirectAI } from '../ai/DirectAI'
@@ -62,6 +63,7 @@ export class Orchestrator {
   private win: BrowserWindow
   private mouse: MouseMonitor
   private collector: ContextCollector
+  private selectionMonitor: SelectionMonitor
   private router: Router
   private directAI: DirectAI
   private agentDetector: AgentDetector
@@ -102,6 +104,7 @@ export class Orchestrator {
     this.win = win
     this.mouse = mouse
     this.collector = new ContextCollector()
+    this.selectionMonitor = new SelectionMonitor()
     this.router = new Router()
     this.directAI = new DirectAI()
     this.agentDetector = new AgentDetector()
@@ -135,6 +138,13 @@ export class Orchestrator {
       console.log(`[orchestrator] Permission: default="${config.defaultPermissionAction}" — server not started`)
     }
 
+    // Start selection monitor (background — captures text selections via accessibility APIs)
+    try {
+      await this.selectionMonitor.start()
+    } catch (err) {
+      console.warn(`[orchestrator] Selection monitor failed: ${err}`)
+    }
+
     // Mouse events — capture window BEFORE showing overlay
     this.mouse.on('longpress', async (e: { x: number; y: number }) => {
       if (this.isProcessing) return
@@ -157,6 +167,12 @@ export class Orchestrator {
       try {
         this.pendingWindow = await this.collector.captureActiveWindow()
         console.log(`[input] Captured window: ${this.pendingWindow?.processName} — "${this.pendingWindow?.title?.slice(0, 40)}"`)
+
+        // Get latest selection from background worker (captured via UIA/IAccessible in child process)
+        const sel = this.selectionMonitor.getLatestSelection()
+        if (sel) {
+          this.collector.setSelectedText(sel.text)
+        }
       } catch {}
 
       this.sendState('recording')
@@ -1201,6 +1217,7 @@ export class Orchestrator {
   /** Full cleanup on app quit — kills all child processes */
   destroy(): void {
     this.permissionServer?.stop()
+    this.selectionMonitor.destroy()
     this.unregisterEscHandler()
     if (this.currentAgentProcess) {
       const pid = this.currentAgentProcess.pid

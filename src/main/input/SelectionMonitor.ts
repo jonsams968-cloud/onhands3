@@ -1,0 +1,150 @@
+/**
+ * Monitors text selection across all applications via a child process.
+ *
+ * WHY CHILD PROCESS:
+ * selection-hook uses WH_MOUSE_LL (low-level mouse hook) to detect text
+ * selections. This hook requires a standard Windows message pump. Electron's
+ * Chromium message loop does NOT pump hook messages, so the callback never
+ * fires in-process. Running in a separate Node.js process gives the hook
+ * its own message loop.
+ *
+ * Architecture:
+ *   SelectionMonitor (Electron main process)
+ *     ↕ stdin/stdout JSON lines
+ *   scripts/selection-worker.cjs (standalone Node.js process)
+ *     ↕ WH_MOUSE_LL hook + UIA/IAccessible
+ *   OS text selection events
+ */
+
+import { spawn, type ChildProcess } from 'child_process'
+import * as path from 'path'
+
+export interface CapturedSelection {
+  text: string
+  programName: string
+  timestamp: number
+}
+
+const METHOD_NAMES: Record<number, string> = {
+  1: 'UIA', 3: 'IAccessible', 11: 'AXAPI', 22: 'PRIMARY', 99: 'Clipboard'
+}
+
+export class SelectionMonitor {
+  private worker: ChildProcess | null = null
+  private latestSelection: CapturedSelection | null = null
+  private running = false
+
+  async start(): Promise<void> {
+    if (this.running) return
+
+    const workerPath = path.join(process.cwd(), 'scripts', 'selection-worker.cjs')
+
+    try {
+      this.worker = spawn('node', [workerPath], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+
+      // Parse JSON lines from worker stdout
+      let buffer = ''
+      this.worker.stdout!.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        const lines = buffer.split('\n')
+        buffer = lines.pop()! // keep incomplete line
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const msg = JSON.parse(line)
+            this.handleWorkerMessage(msg)
+          } catch {}
+        }
+      })
+
+      this.worker.stderr!.on('data', (chunk: Buffer) => {
+        console.error(`[selection:worker] ${chunk.toString('utf8').trim()}`)
+      })
+
+      this.worker.on('exit', (code) => {
+        console.log(`[selection] Worker exited (code=${code})`)
+        this.running = false
+        this.worker = null
+      })
+
+      this.worker.on('error', (err) => {
+        console.error(`[selection] Worker spawn failed: ${err.message}`)
+        this.running = false
+        this.worker = null
+      })
+
+      this.running = true
+      console.log('[selection] Worker spawned — waiting for status...')
+    } catch (err) {
+      console.warn(`[selection] Failed to spawn worker: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+
+  private handleWorkerMessage(msg: any): void {
+    if (msg.type === 'status') {
+      if (msg.started) {
+        console.log('[selection] Monitor started (UIA + IAccessible + Clipboard fallback)')
+      } else {
+        console.warn('[selection] Worker failed to start hook')
+        this.running = false
+      }
+    } else if (msg.type === 'selection') {
+      if (msg.text && msg.text.trim()) {
+        this.latestSelection = {
+          text: msg.text,
+          programName: msg.programName || '',
+          timestamp: Date.now(),
+        }
+        console.log(
+          `[selection] ${msg.text.length} chars from ${msg.programName || '?'} ` +
+          `(${METHOD_NAMES[msg.method] || msg.method})`
+        )
+      }
+    } else if (msg.type === 'error') {
+      console.error(`[selection] Worker error: ${msg.message}`)
+    }
+  }
+
+  /**
+   * Get the most recent text selection captured by the background worker.
+   * Returns null if no selection exists or it's older than maxAgeMs.
+   */
+  getLatestSelection(maxAgeMs = 30_000): CapturedSelection | null {
+    if (!this.latestSelection) return null
+
+    const age = Date.now() - this.latestSelection.timestamp
+    if (age > maxAgeMs) return null
+
+    return this.latestSelection
+  }
+
+  /** Clear the stored selection (e.g. after consuming it) */
+  clearSelection(): void {
+    this.latestSelection = null
+  }
+
+  stop(): void {
+    if (this.worker) {
+      try {
+        this.worker.stdin!.write(JSON.stringify({ cmd: 'stop' }) + '\n')
+      } catch {}
+      this.running = false
+    }
+  }
+
+  destroy(): void {
+    if (this.worker) {
+      try {
+        this.worker.stdin!.write(JSON.stringify({ cmd: 'stop' }) + '\n')
+      } catch {}
+      try { this.worker.kill() } catch {}
+      this.worker = null
+    }
+    this.latestSelection = null
+    this.running = false
+  }
+}
