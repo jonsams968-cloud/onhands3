@@ -266,6 +266,52 @@ Execute → stream output → show result / auto-hide after 12s
 
 ---
 
+## Roadmap / 路线图
+
+### Phase 1 — Core Experience / 基础体验
+
+Make it fast enough and stable enough that people want to use it daily.
+
+| # | Item | Description |
+|---|------|-------------|
+| 1.1 | **Speed / 速度优化** | Agent pre-warm (spawn on long press), parallel context collection, streaming STT |
+| 1.2 | **Stability / 稳定性** | Agent crash recovery, network-down graceful degradation, state machine deadlock fallback |
+| 1.3 | **Recent History / 近期历史** | In-memory ring buffer (last 5 commands + result summaries), injected into prompt. Agent decides relevance — no detection logic needed |
+
+### Phase 2 — Context Intelligence / 上下文智能
+
+Richer context → fewer ASK prompts → higher success rate per invocation.
+
+| # | Item | Description |
+|---|------|-------------|
+| 2.1 | **Timestamp / 时间上下文** | Current time, day of week, date. Handles "today", "tomorrow", "next Monday" |
+| 2.2 | **UIA Element Detection / 元素检测** | Detect element type at long-press position (image/link/button/input). Get src/href/alt text |
+| 2.3 | **Screen OCR / 屏幕文字识别** | OCR screenshot text into context directly. Saves one agent tool-call round |
+| 2.4 | **User Preferences / 用户偏好** | preferences.json: language, saveDir, commonProjects. Injected into prompt for consistent behavior |
+
+### Phase 3 — UI & Usability / 界面与可用性
+
+Polish after the foundation is solid.
+
+| # | Item | Description |
+|---|------|-------------|
+| 3.1 | **Markdown Rendering / Markdown 渲染** | Headings, lists, code blocks (syntax highlight), tables, bold/italic |
+| 3.2 | **Result Layout / 结果排版** | Spacing, font sizing, long-text fold/scroll |
+| 3.3 | **Settings Page / 前端配置页** | GUI for API Key, STT mode, long-press duration. Replace manual .env editing |
+
+### Phase 4 — Ecosystem / 开放生态
+
+Requires a user base to justify.
+
+| # | Item | Description |
+|---|------|-------------|
+| 4.1 | **SDK & Docs / SDK 文档** | Write after API freeze: IPC protocol, Agent protocol, ASK protocol |
+| 4.2 | **Module Marketplace / 模块市场** | Plugin API + frontend marketplace page |
+
+Phases are soft boundaries — items can move across phases based on actual need.
+
+---
+
 ## Acknowledgments / 致谢
 
 - [**Multica**](https://github.com/multica-ai/multica) — AI desktop assistant framework
