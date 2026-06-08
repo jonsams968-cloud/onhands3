@@ -29,7 +29,7 @@
 | 📂 Select files + long press | "Rename with today's date" | Agent (auto-detects selection) |
 
 **Key capabilities:**
-- **Voice recognition** — local Whisper large-v3-turbo, fully offline, good Chinese accuracy
+- **Voice recognition** — Tencent Cloud real-time ASR (streaming), local Whisper fallback, good Chinese accuracy
 - **Smart routing** — simple Q&A via Direct AI, file ops/coding via Agent CLI
 - **Context awareness** — foreground window, working directory, selected files, selected text, clipboard
 - **Real-time streaming** — tool calls and text output appear as the agent works
@@ -47,7 +47,7 @@
 | ⌨️ 文本输入 | "翻译成中文" | Agent / Direct AI |
 | 📂 选中文件 + 长按 | "重命名为今天的日期" | Agent（自动识别选中文件）|
 
-- **语音识别** — 本地 Whisper large-v3-turbo，完全离线
+- **语音识别** — 腾讯云实时 ASR（流式），本地 Whisper fallback
 - **智能路由** — 简单问答走 Direct AI，文件操作/编程走 Agent CLI
 - **上下文感知** — 自动收集前台窗口、工作目录、选中文件、选中文字、剪贴板
 - **实时流** — Agent 执行过程实时显示
@@ -103,8 +103,13 @@ AI_BASE_URL=https://apihub.agnes-ai.com/v1
 AI_MODEL=agnes-2.0-flash
 
 # Speech-to-text
-STT_MODE=local
+STT_MODE=tencent
 WHISPER_MODEL=large-v3-turbo
+
+# Tencent Cloud ASR (for STT_MODE=tencent)
+TENCENT_SECRET_ID=
+TENCENT_SECRET_KEY=
+TENCENT_APP_ID=
 
 # Long press sensitivity (ms)
 LONG_PRESS_DURATION=800
@@ -183,7 +188,8 @@ src/
 │   ├── context/
 │   │   └── ContextCollector.ts    # Context: window, selected files/text, clipboard
 │   ├── stt/
-│   │   └── WhisperSTT.ts          # STT: local whisper.cpp / cloud Whisper API
+│   │   ├── WhisperSTT.ts          # STT factory: local / cloud / tencent
+│   │   └── TencentASR.ts          # Tencent Cloud real-time ASR (WebSocket)
 │   └── permission/
 │       └── PermissionServer.ts    # Dangerous operation approval system
 ├── renderer/                      # Renderer process (React)
@@ -220,7 +226,7 @@ Execute → stream output → show result / auto-hide after 12s
 |-------|-----------|
 | Framework | Electron 35 + electron-vite 3 |
 | UI | React 18 + TypeScript 5.7 |
-| STT | whisper.cpp (local) / OpenAI Whisper API (cloud) |
+| STT | Tencent Cloud ASR (streaming) / whisper.cpp (local fallback) / OpenAI Whisper API (cloud) |
 | Agent | Claude Code CLI (stream-json mode) |
 | Text selection | selection-hook via child process (UIA + IAccessible + Clipboard fallback) |
 | Window capture | Win32 API via koffi (GetForegroundWindow, Shell COM) |
@@ -236,7 +242,7 @@ Execute → stream output → show result / auto-hide after 12s
 | `AI_API_KEY` | Direct AI API key | - |
 | `AI_BASE_URL` | AI API endpoint | `https://apihub.agnes-ai.com/v1` |
 | `AI_MODEL` | AI model name | `agnes-2.0-flash` |
-| `STT_MODE` | STT mode: `local` / `cloud` | `local` |
+| `STT_MODE` | STT mode: `local` / `cloud` / `tencent` | `cloud` |
 | `WHISPER_MODEL` | Whisper model size | `large-v3-turbo` |
 | `LONG_PRESS_DURATION` | Long press threshold (ms) | `800` |
 | `DRAG_THRESHOLD_PX` | Drag detection threshold (px) | `15` |
@@ -257,6 +263,7 @@ Execute → stream output → show result / auto-hide after 12s
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.48 | 2026-06-09 | Tencent Cloud streaming ASR, Phase 1 stability (history, parallel capture, crash recovery), permission dialog fix |
 | v0.47 | 2026-06-08 | selection-hook replaces Ctrl+C for text selection capture |
 | v0.46 | 2026-06-07 | ASK protocol — agent can present choices to user |
 | v0.45 | 2026-06-07 | Permission API with proper Chinese encoding |
@@ -268,15 +275,15 @@ Execute → stream output → show result / auto-hide after 12s
 
 ## Roadmap / 路线图
 
-### Phase 1 — Core Experience / 基础体验
+### Phase 1 — Core Experience / 基础体验 ✅
 
 Make it fast enough and stable enough that people want to use it daily.
 
-| # | Item | Description |
-|---|------|-------------|
-| 1.1 | **Speed / 速度优化** | Agent pre-warm (spawn on long press), parallel context collection, streaming STT |
-| 1.2 | **Stability / 稳定性** | Agent crash recovery, network-down graceful degradation, state machine deadlock fallback |
-| 1.3 | **Recent History / 近期历史** | In-memory ring buffer (last 5 commands + result summaries), injected into prompt. Agent decides relevance — no detection logic needed |
+| # | Item | Description | Status |
+|---|------|-------------|--------|
+| 1.1 | **Speed / 速度优化** | Parallel context collection, Tencent Cloud streaming STT, 5-min processing timeout | ✅ Done |
+| 1.2 | **Stability / 稳定性** | Agent crash recovery, STT auto-fallback (tencent→local), permission dialog fix, network error handling | ✅ Done |
+| 1.3 | **Recent History / 近期历史** | In-memory ring buffer (last 5 commands + result summaries), injected into prompt | ✅ Done |
 
 ### Phase 2 — Context Intelligence / 上下文智能
 
