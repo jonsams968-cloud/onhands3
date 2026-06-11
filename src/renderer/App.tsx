@@ -163,8 +163,8 @@ export default function App() {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (stateRef.current === 'hidden') return
-      // Ask/confirm states stay fully interactive
-      if (stateRef.current === 'ask' || stateRef.current === 'confirm') return
+      // Ask/confirm/preview states stay fully interactive
+      if (stateRef.current === 'ask' || stateRef.current === 'confirm' || stateRef.current === 'preview') return
       const el = document.elementFromPoint(e.clientX, e.clientY)
       const isOverContent = el?.closest('.capsule') != null
       // Only send IPC when value actually changes — prevents IPC spam that blocks ask interactivity

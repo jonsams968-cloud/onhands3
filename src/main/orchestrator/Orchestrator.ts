@@ -1045,8 +1045,8 @@ export class Orchestrator {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
       this.win.webContents.send('command-text', '')
-    } else if (state === 'ask' || state === 'confirm') {
-      // Ask/confirm need immediate interactivity — set in main process
+    } else if (state === 'ask' || state === 'confirm' || state === 'preview') {
+      // Ask/confirm/preview need immediate interactivity — set in main process
       // (don't rely on renderer IPC round-trip which causes click-through delay)
       this.win.setIgnoreMouseEvents(false)
       this.win.focus()
