@@ -14,21 +14,15 @@ If you receive screen context (window info, clipboard), use it to give better an
 For text tasks (translate, calculate, explain, chat), respond directly.`
 
 export class DirectAI {
-  private apiKey: string
-  private baseUrl: string
-  private model: string
-  private maxTokens: number
-
-  constructor() {
-    const cfg = loadConfig()
-    this.apiKey = cfg.aiApiKey
-    this.baseUrl = cfg.aiBaseUrl.replace(/\/$/, '')
-    this.model = cfg.aiModel
-    this.maxTokens = cfg.aiMaxTokens
+  /** Read config fresh on each call — ensures settings changes take effect immediately */
+  private cfg() {
+    const c = loadConfig()
+    return { apiKey: c.aiApiKey, baseUrl: c.aiBaseUrl.replace(/\/$/, ''), model: c.aiModel, maxTokens: c.aiMaxTokens }
   }
 
   async execute(command: string, context: DesktopContext, resolution: string, abortSignal?: AbortSignal): Promise<ExecutionResult> {
     const startTime = Date.now()
+    const { apiKey, baseUrl, model, maxTokens } = this.cfg()
 
     const content: unknown[] = []
     if (context.screenshot) {
@@ -42,8 +36,8 @@ export class DirectAI {
     })
 
     const body = {
-      model: this.model,
-      max_tokens: this.maxTokens,
+      model,
+      max_tokens: maxTokens,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content },
@@ -51,9 +45,9 @@ export class DirectAI {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: abortSignal,
       })
@@ -97,9 +91,10 @@ export class DirectAI {
    */
   async cleanDictation(rawText: string, abortSignal?: AbortSignal): Promise<ExecutionResult> {
     const startTime = Date.now()
+    const { apiKey, baseUrl, model } = this.cfg()
 
     const body = {
-      model: this.model,
+      model,
       max_tokens: 512,
       temperature: 0.1,
       messages: [
@@ -123,10 +118,10 @@ export class DirectAI {
     }
 
     try {
-      console.log(`[dictation] Cleaning via ${this.baseUrl} model=${this.model}`)
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      console.log(`[dictation] Cleaning via ${baseUrl} model=${model}`)
+      const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: abortSignal,
       })
