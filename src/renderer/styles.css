@@ -997,6 +997,28 @@ html, body, #root {
 
 .result-cards-section {
   margin-top: 8px;
+  position: relative;
+}
+
+.cards-close-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 5;
+}
+
+.cards-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
 }
 
 .result-cards-container {

@@ -96,6 +96,7 @@ export default function App() {
           setPermission(null)
           setAskRequest(null)
           setCommandText('')
+          commandTextRef.current = ''
           setPreviewData(null)
           setSavedPath(null)
           setQueueItems([])
@@ -148,13 +149,16 @@ export default function App() {
       }
 
       if (s === 'result' || s === 'error') {
-        // Push result card — persists across overlay show/hide cycles
-        setResultCards(prev => [...prev.slice(-19), {
-          id: Date.now(),
-          command: commandTextRef.current,
-          result: d || '',
-          isError: s === 'error',
-        }])
+        // Only push card for pipeline results (have a command text).
+        // Dictation/silence results don't go through pipeline → no card.
+        if (commandTextRef.current) {
+          setResultCards(prev => [...prev.slice(-19), {
+            id: Date.now(),
+            command: commandTextRef.current,
+            result: d || '',
+            isError: s === 'error',
+          }])
+        }
         // Auto-hide after 60s (longer than old 12s to let users read cards)
         hideTimer.current = setTimeout(() => {
           setExiting(true)
@@ -241,24 +245,42 @@ export default function App() {
   // ─── Ask data now arrives via state-changed IPC (atomic) ───
   // No separate onAskRequest listener needed
 
-  // ─── ESC to close preview ───
+  // ─── ESC to close preview / dismiss result cards ───
 
   useEffect(() => {
-    if (state !== 'preview') return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setExiting(true)
-        setTimeout(() => {
-          setState('hidden')
-          setPreviewData(null)
-          setSavedPath(null)
-          window.onhands.hideWindow()
-        }, 200)
+    if (state === 'preview') {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          setExiting(true)
+          setTimeout(() => {
+            setState('hidden')
+            setPreviewData(null)
+            setSavedPath(null)
+            window.onhands.hideWindow()
+          }, 200)
+        }
       }
+      window.addEventListener('keydown', handler)
+      return () => window.removeEventListener('keydown', handler)
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [state])
+    if ((state === 'result' || state === 'error') && resultCards.length > 0) {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          if (hideTimer.current) clearTimeout(hideTimer.current)
+          setExiting(true)
+          setTimeout(() => {
+            setState('hidden')
+            setVisible(false)
+            setExiting(false)
+            window.onhands.hideWindow()
+            window.onhands.setInteractive(false)
+          }, 200)
+        }
+      }
+      window.addEventListener('keydown', handler)
+      return () => window.removeEventListener('keydown', handler)
+    }
+  }, [state, resultCards.length])
 
   // ─── Auto-scroll & auto-focus ───
 
@@ -495,9 +517,22 @@ export default function App() {
           } catch { return null }
         })()}
 
-        {/* ── Result Cards ── */}
-        {resultCards.length > 0 && (
+        {/* ── Result Cards — hidden during preview/ask/confirm to avoid visual conflicts ── */}
+        {resultCards.length > 0 && state !== 'preview' && state !== 'ask' && state !== 'confirm' && (
           <div className="result-cards-section">
+            {(state === 'result' || state === 'error') && (
+              <button className="cards-close-btn" onClick={() => {
+                if (hideTimer.current) clearTimeout(hideTimer.current)
+                setExiting(true)
+                setTimeout(() => {
+                  setState('hidden')
+                  setVisible(false)
+                  setExiting(false)
+                  window.onhands.hideWindow()
+                  window.onhands.setInteractive(false)
+                }, 200)
+              }} title="关闭 (ESC)">✕ 关闭</button>
+            )}
             <div className="result-cards-container" ref={cardsRef}>
               {resultCards.map((card, idx) => (
                 <div key={card.id} className={[
