@@ -542,8 +542,8 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Result Cards — hidden during preview/ask/confirm to avoid visual conflicts ── */}
-        {resultCards.length > 0 && state !== 'preview' && state !== 'ask' && state !== 'confirm' && (
+        {/* ── Result Cards — hidden during recording/preview/ask/confirm ── */}
+        {resultCards.length > 0 && state !== 'recording' && state !== 'input' && state !== 'transcribed' && state !== 'preview' && state !== 'ask' && state !== 'confirm' && (
           <div className="result-cards-section">
             <div className="result-cards-container" ref={cardsRef}>
               {resultCards.map((card, idx) => (
@@ -575,7 +575,20 @@ export default function App() {
               ))}
             </div>
             {resultCards.length > 1 && (
-              <button className="clear-cards-btn" onClick={() => setResultCards([])}>清除全部</button>
+              <button className="clear-cards-btn" onClick={() => {
+                setResultCards([])
+                if (state === 'result' || state === 'error') {
+                  if (hideTimer.current) clearTimeout(hideTimer.current)
+                  setExiting(true)
+                  setTimeout(() => {
+                    setState('hidden')
+                    setVisible(false)
+                    setExiting(false)
+                    window.onhands.hideWindow()
+                    window.onhands.setInteractive(false)
+                  }, 200)
+                }
+              }}>清除全部</button>
             )}
           </div>
         )}

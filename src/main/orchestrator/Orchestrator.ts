@@ -1538,10 +1538,7 @@ export class Orchestrator {
           this.sendState('error', output)
         }
       }
-
-      setTimeout(() => {
-        if (!this.isProcessing) this.sendState('hidden')
-      }, 12000)
+      // Auto-hide handled by renderer (60s for card results, 2s for transient)
     } catch (err) {
       this.resetAskState()
       this.sendState('error', err instanceof Error ? err.message : 'Resume failed')
