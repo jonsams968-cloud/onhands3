@@ -991,19 +991,12 @@ export class Orchestrator {
       if (hasImages) {
         parts.push(`## Video Generation — IMAGE-TO-VIDEO MODE (agnes-video-v2.0)`)
         parts.push(`CRITICAL: The user selected image(s). You MUST use image-to-video mode, NOT text-to-video.`)
-        parts.push(`The "image" parameter accepts a PUBLIC URL. You must upload the local image first using the Agnes image API, then pass the returned URL.`)
+        parts.push(`The "image" parameter accepts a data URI (data:image/png;base64,...). Read the local image file as base64 and construct a data URI.`)
         parts.push(``)
-        parts.push(`### Step 1: Upload local image to get a public URL`)
-        parts.push(`POST ${baseUrl}/images/generations`)
-        parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "placeholder", "return_base64": false }`)
-        parts.push(`Response: { "data": [{ "url": "https://..." }] } — use this URL for the video API`)
-        parts.push(`Wait... actually, a simpler approach: use a free image hosting service or convert to base64 data URI.`)
-        parts.push(`SIMPLEST APPROACH: Read the image file as base64, construct a data URI, and pass it as the "image" field.`)
-        parts.push(``)
-        parts.push(`### Step 2: Create video task with image`)
+        parts.push(`### Create video task with image`)
         parts.push(`POST ${baseUrl}/videos`)
         parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
-        parts.push(`Body: { "model": "agnes-video-v2.0", "prompt": "MOTION_DESCRIPTION", "image": "IMAGE_URL_OR_DATA_URI", "num_frames": ${numFrames}, "frame_rate": ${frameRate} }`)
+        parts.push(`Body: { "model": "agnes-video-v2.0", "prompt": "MOTION_DESCRIPTION", "image": "data:image/png;base64,BASE64_OF_IMAGE", "num_frames": ${numFrames}, "frame_rate": ${frameRate} }`)
         parts.push(`Response: { "id": "task_xxx", "video_id": "video_xxx", "status": "queued" }`)
         parts.push(``)
         parts.push(`### Source images (MUST use at least one):`)
@@ -1699,6 +1692,13 @@ export class Orchestrator {
     this.isProcessing = false
     this.isRecording = false
     this.pendingAudio = null
+
+    // Clean up queued task screenshot files before clearing
+    for (const task of this.taskQueue) {
+      if (task.screenshotPath) {
+        try { fs.unlinkSync(task.screenshotPath) } catch {}
+      }
+    }
     this.taskQueue = []
     this.sendQueueUpdate()
     this.lastAbortTime = Date.now()
