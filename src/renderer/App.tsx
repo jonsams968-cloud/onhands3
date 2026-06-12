@@ -545,29 +545,30 @@ export default function App() {
         {/* ── Result Cards — hidden during preview/ask/confirm to avoid visual conflicts ── */}
         {resultCards.length > 0 && state !== 'preview' && state !== 'ask' && state !== 'confirm' && (
           <div className="result-cards-section">
-            {(state === 'result' || state === 'error') && (
-              <button className="cards-close-btn" onClick={() => {
-                if (hideTimer.current) clearTimeout(hideTimer.current)
-                setExiting(true)
-                setTimeout(() => {
-                  setState('hidden')
-                  setVisible(false)
-                  setExiting(false)
-                  window.onhands.hideWindow()
-                  window.onhands.setInteractive(false)
-                }, 200)
-              }} title="关闭 (ESC)">✕ 关闭</button>
-            )}
             <div className="result-cards-container" ref={cardsRef}>
               {resultCards.map((card, idx) => (
                 <div key={card.id} className={[
                   'result-card',
                   card.isError && 'result-card--error',
-                  idx === resultCards.length - 1 && (state === 'result' || state === 'error') && 'result-card--latest',
                 ].filter(Boolean).join(' ')}>
                   <div className="result-card__header">
                     {card.command && <span className="result-card__command">🎤 {card.command.slice(0, 40)}{card.command.length > 40 ? '...' : ''}</span>}
-                    <button className="result-card__dismiss" onClick={() => setResultCards(prev => prev.filter(c => c.id !== card.id))} title="关闭">×</button>
+                    <button className="result-card__dismiss" onClick={() => {
+                      const remaining = resultCards.filter(c => c.id !== card.id)
+                      setResultCards(remaining)
+                      // Last card dismissed manually → hide overlay immediately
+                      if (remaining.length === 0 && (state === 'result' || state === 'error')) {
+                        if (hideTimer.current) clearTimeout(hideTimer.current)
+                        setExiting(true)
+                        setTimeout(() => {
+                          setState('hidden')
+                          setVisible(false)
+                          setExiting(false)
+                          window.onhands.hideWindow()
+                          window.onhands.setInteractive(false)
+                        }, 200)
+                      }
+                    }} title="关闭">×</button>
                   </div>
                   <div className="result-card__body" dangerouslySetInnerHTML={{ __html: card.isError ? escapeHtml(card.result) : renderMarkdown(card.result) }} />
                 </div>
