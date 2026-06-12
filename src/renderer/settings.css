@@ -441,6 +441,7 @@
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 7px 16px;
   border-radius: var(--radius-xs);
@@ -460,7 +461,8 @@
   background: var(--accent);
   border-color: var(--accent);
   color: white;
-  min-width: 100px;
+  padding: 5px 12px;
+  min-width: 84px;
 }
 
 .btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
@@ -469,7 +471,8 @@
   background: var(--success);
   border-color: var(--success);
   color: white;
-  min-width: 100px;
+  padding: 5px 12px;
+  min-width: 84px;
   cursor: default;
 }
 

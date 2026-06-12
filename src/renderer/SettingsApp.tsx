@@ -606,7 +606,7 @@ export default function SettingsApp() {
         <div className="settings-footer">
           <span className="settings-footer-version">v0.48</span>
           <button className={`btn btn--primary ${saved ? 'btn--saved' : ''}`} onClick={handleSave} disabled={saving}>
-            {saving ? '...' : saved ? ('✓ ' + txt.saved) : txt.saveChanges}
+            {saving ? '...' : saved ? txt.saved : txt.saveChanges}
           </button>
         </div>
       </div>
