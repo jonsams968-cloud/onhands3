@@ -186,13 +186,17 @@ export class Orchestrator {
         try {
           this.pendingWindow = await this.collector.captureActiveWindow()
           const sel = this.selectionMonitor.getLatestSelection()
+          // Pass any selection as context to the agent
           if (sel) {
             this.collector.setSelectedText(sel.text)
             this.pendingSelectedText = sel.text
-            this.selectionMonitor.clearSelection()  // Consume — don't let stale selection poison next interaction
           }
+          this.selectionMonitor.clearSelection()
+          // For dictation routing, only very recent selections (< 5s) should prevent
+          // dictation mode — older selections are likely from different apps/interactions
           if (e.isIBeam) {
-            this.pendingDictation = !sel?.text
+            const recentSel = sel && (Date.now() - sel.timestamp < 5000) ? sel : null
+            this.pendingDictation = !recentSel?.text
           } else {
             this.pendingDictation = false
           }
@@ -223,17 +227,21 @@ export class Orchestrator {
 
         // Get latest selection from background worker (captured via UIA/IAccessible in child process)
         const sel = this.selectionMonitor.getLatestSelection()
+        // Pass any selection as context to the agent
         if (sel) {
           this.collector.setSelectedText(sel.text)
           this.pendingSelectedText = sel.text
-          this.selectionMonitor.clearSelection()  // Consume — don't let stale selection poison next interaction
         }
+        this.selectionMonitor.clearSelection()
 
-        // I-beam in text field + selected text → Agent mode (voice = instruction, selection = context)
-        // I-beam in text field + NO selected text → dictation mode (voice → text injection)
+        // I-beam in text field + RECENT selected text → Agent mode (voice = instruction, selection = context)
+        // I-beam in text field + NO recent selection → dictation mode (voice → text injection)
+        // Only selections within 5s are considered "intentional" — older ones are likely
+        // from different apps/interactions and should not block dictation mode
         if (e.isIBeam) {
-          this.pendingDictation = !sel?.text
-          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}`)
+          const recentSel = sel && (Date.now() - sel.timestamp < 5000) ? sel : null
+          this.pendingDictation = !recentSel?.text
+          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}${recentSel ? '' : sel ? ' (stale selection ignored)' : ''}`)
         } else {
           this.pendingDictation = false
         }
@@ -802,7 +810,6 @@ export class Orchestrator {
           this.streamChunk(`[tool] ${ev.name}(${detail})`)
         } else if (ev.type === 'system') {
           if (ev.sessionId) capturedSessionId = ev.sessionId
-          this.streamChunk(`[system] session=${ev.sessionId?.slice(0, 8) || '?'}`)
         }
         // 'result' type: will be shown in result state — no action here
       },

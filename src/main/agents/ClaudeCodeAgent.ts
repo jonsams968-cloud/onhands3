@@ -91,8 +91,10 @@ export class ClaudeCodeAgent implements Agent {
               console.log(`[agent] Result: ${String(event.result || '').slice(0, 100)}`)
               opts?.onEvent?.({ type: 'result', result: event.result || '' })
             } else if (type === 'system') {
-              if (event.session_id) capturedSessionId = event.session_id
-              console.log(`[agent] System: session=${event.session_id || '?'}`)
+              if (event.session_id && !capturedSessionId) {
+                capturedSessionId = event.session_id
+                console.log(`[agent] Session: ${event.session_id}`)
+              }
               opts?.onEvent?.({ type: 'system', sessionId: event.session_id || '' })
             } else if (eventCount <= 3) {
               console.log(`[agent] Event #${eventCount}: type=${type}`)
