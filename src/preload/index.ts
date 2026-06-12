@@ -39,6 +39,19 @@ contextBridge.exposeInMainWorld('onhands', {
   regenerateMedia: () => ipcRenderer.invoke('media:regenerate'),
   saveMedia: (sourcePath: string, targetDir: string) => ipcRenderer.invoke('media:save', sourcePath, targetDir),
 
+  // Queue IPC
+  onQueueUpdate: (cb: (items: { id: number; command: string }[]) => void) => {
+    const handler = (_e: any, items: any) => cb(items)
+    ipcRenderer.on('queue-update', handler)
+    return () => ipcRenderer.removeListener('queue-update', handler)
+  },
+  cancelQueueTask: (id: number) => ipcRenderer.invoke('queue:cancel', id),
+  onRecordingQueue: (cb: (active: boolean) => void) => {
+    const handler = (_e: any, active: boolean) => cb(active)
+    ipcRenderer.on('recording-queue', handler)
+    return () => ipcRenderer.removeListener('recording-queue', handler)
+  },
+
   // Settings IPC
   settingsLoad: () => ipcRenderer.invoke('settings:load'),
   settingsSave: (data: Record<string, any>) => ipcRenderer.invoke('settings:save', data),

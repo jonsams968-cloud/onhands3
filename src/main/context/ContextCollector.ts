@@ -216,6 +216,30 @@ export class ContextCollector {
   }
 
   /**
+   * Restore a previously captured context snapshot.
+   * Used by the task queue to replay the exact context from enqueue time.
+   */
+  restoreSnapshot(data: {
+    screenshotPath?: string | null
+    clipboard?: string | null
+    selectedFiles?: string[] | null
+    workingDirectory?: string | null
+  }): void {
+    if (data.screenshotPath !== undefined) {
+      this.capturedScreenshotPath = data.screenshotPath
+      // Read base64 from file if it exists
+      if (data.screenshotPath && fs.existsSync(data.screenshotPath)) {
+        this.capturedScreenshot = fs.readFileSync(data.screenshotPath).toString('base64')
+      } else {
+        this.capturedScreenshot = undefined
+      }
+    }
+    if (data.clipboard !== undefined) this.capturedClipboard = data.clipboard
+    if (data.selectedFiles !== undefined) this.capturedSelectedFiles = data.selectedFiles
+    if (data.workingDirectory !== undefined) this.capturedWorkingDir = data.workingDirectory
+  }
+
+  /**
    * Get Explorer's current folder via Shell COM automation.
    * Uses exact HWND matching to find the correct Explorer window.
    */

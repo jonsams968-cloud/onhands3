@@ -4,21 +4,22 @@ import type { UIState } from '../../shared/types'
 export function useVoiceRecorder(state: UIState, opts: {
   onRecordingComplete: (base64: string) => void
   onError: (error: string) => void
-}) {
+}, queueRecording = false) {
   const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
   const peakAmplitudeRef = useRef(0)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const monitorIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  const shouldRecord = state === 'recording' || queueRecording
+
   useEffect(() => {
-    if (state === 'recording') {
+    if (shouldRecord) {
       startRecording()
     } else if (recorderRef.current?.state === 'recording') {
       recorderRef.current.stop()
     }
-  }, [state])
+  }, [shouldRecord])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -58,9 +59,12 @@ export function useVoiceRecorder(state: UIState, opts: {
       }, 100)
 
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
-      chunksRef.current = []
 
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      // Use LOCAL chunks array — prevents race condition if a new recording
+      // starts before the previous onstop fires (shared ref would get reset)
+      const localChunks: Blob[] = []
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) localChunks.push(e.data) }
 
       recorder.onstop = async () => {
         // Stop monitoring
@@ -69,7 +73,7 @@ export function useVoiceRecorder(state: UIState, opts: {
           monitorIntervalRef.current = null
         }
 
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        const blob = new Blob(localChunks, { type: 'audio/webm' })
         const peakAmplitude = peakAmplitudeRef.current
         peakAmplitudeRef.current = 0
 

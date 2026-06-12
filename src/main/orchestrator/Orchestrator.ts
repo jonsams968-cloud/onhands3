@@ -61,6 +61,20 @@ function extractAskMarker(text: string): AskRequest | null {
   return null  // Marker not yet complete
 }
 
+// Task queue snapshot — saves FULL context at queue time for later execution
+interface QueuedTask {
+  id: number
+  command: string
+  window: DesktopContext['activeWindow'] | null
+  position: { x: number; y: number }
+  selectedText: string | null
+  // Full context snapshot (preserved independently from subsequent captures)
+  screenshotPath: string | null
+  clipboard: string | null
+  selectedFiles: string[] | null
+  workingDirectory: string | null
+}
+
 export class Orchestrator {
   private win: BrowserWindow
   private mouse: MouseMonitor
@@ -71,6 +85,10 @@ export class Orchestrator {
   private agentDetector: AgentDetector
   private agent: Agent | null = null
   private isProcessing = false
+  private taskQueue: QueuedTask[] = []
+  private taskQueueId = 0
+  private pendingSelectedText: string | null = null
+  private isQueuingRecording = false
   private isRecording = false
   private lastAbortTime = 0
   private pendingAudio: string | null = null
@@ -154,13 +172,41 @@ export class Orchestrator {
 
     // Mouse events — capture window BEFORE showing overlay
     this.mouse.on('longpress', async (e: { x: number; y: number; isIBeam?: boolean }) => {
-      if (this.isProcessing) return
       if (Date.now() - this.lastAbortTime < 200) return
       this.pendingPosition = { x: e.x, y: e.y }
       this.pendingAudio = null
       this.pendingWindow = null
+      this.pendingSelectedText = null
       this.isRecording = true
 
+      // ─── Task already running → lightweight queue recording ───
+      // Don't change overlay state — keep processing UI visible.
+      // Just show a small recording indicator on top.
+      if (this.isProcessing) {
+        try {
+          this.pendingWindow = await this.collector.captureActiveWindow()
+          const sel = this.selectionMonitor.getLatestSelection()
+          if (sel) {
+            this.collector.setSelectedText(sel.text)
+            this.pendingSelectedText = sel.text
+            this.selectionMonitor.clearSelection()  // Consume — don't let stale selection poison next interaction
+          }
+          if (e.isIBeam) {
+            this.pendingDictation = !sel?.text
+          } else {
+            this.pendingDictation = false
+          }
+        } catch {
+          this.pendingDictation = !!e.isIBeam
+        }
+        // Show recording indicator on top of current processing UI
+        this.isQueuingRecording = true
+        this.win.webContents.send('recording-queue', true)
+        console.log('[input] Queue recording started — overlay unchanged')
+        return
+      }
+
+      // ─── Normal path — no task running ───
       // Hide overlay first to capture the REAL foreground window
       if (this.win.isVisible()) {
         this.win.hide()
@@ -179,6 +225,8 @@ export class Orchestrator {
         const sel = this.selectionMonitor.getLatestSelection()
         if (sel) {
           this.collector.setSelectedText(sel.text)
+          this.pendingSelectedText = sel.text
+          this.selectionMonitor.clearSelection()  // Consume — don't let stale selection poison next interaction
         }
 
         // I-beam in text field + selected text → Agent mode (voice = instruction, selection = context)
@@ -197,13 +245,28 @@ export class Orchestrator {
     })
 
     this.mouse.on('longpressend', () => {
-      if (!this.isProcessing && this.isRecording) {
+      // Queuing recording ended — hide indicator, keep processing UI
+      if (this.isQueuingRecording) {
+        this.isQueuingRecording = false
+        this.isRecording = false
+        this.win.webContents.send('recording-queue', false)
+        // Misfire timer: if no audio within 3s, silently ignore
+        this.misfireTimer = setTimeout(() => {
+          if (!this.pendingAudio) {
+            console.log('[input] Queue recording misfire — no audio')
+          }
+          this.misfireTimer = null
+        }, 3000)
+        return
+      }
+
+      if (this.isRecording) {
         this.isRecording = false
         this.sendState('processing')
         this.streamChunk('[system] 正在处理录音...')
 
         this.misfireTimer = setTimeout(() => {
-          if (!this.isProcessing && !this.pendingAudio) {
+          if (!this.pendingAudio) {
             console.log('[input] Misfire — no audio received, hiding')
             this.sendState('hidden')
           }
@@ -215,12 +278,26 @@ export class Orchestrator {
     // IPC: audio from renderer
     ipcMain.handle('voice:recording', async (_e: any, base64Audio: string) => {
       if (this.misfireTimer) { clearTimeout(this.misfireTimer); this.misfireTimer = null }
+      // Clear queue recording indicator
+      if (this.isQueuingRecording) {
+        this.isQueuingRecording = false
+        this.win.webContents.send('recording-queue', false)
+      }
       this.pendingAudio = base64Audio
       await this.processVoice()
     })
 
     ipcMain.handle('voice:error', async (_e: any, error: string) => {
       if (this.misfireTimer) { clearTimeout(this.misfireTimer); this.misfireTimer = null }
+
+      // Queue recording error — don't disrupt current task
+      if (this.isQueuingRecording) {
+        this.isQueuingRecording = false
+        this.isRecording = false
+        this.win.webContents.send('recording-queue', false)
+        console.log(`[voice] Queue recording error: ${error}`)
+        return
+      }
 
       if (error === 'silence') {
         console.log('[voice] No speech detected — silence')
@@ -253,11 +330,25 @@ export class Orchestrator {
       this.handleAskAnswer(optionLabel)
     })
 
+    // IPC: cancel a queued task
+    ipcMain.handle('queue:cancel', async (_e: any, id: number) => {
+      const idx = this.taskQueue.findIndex(t => t.id === id)
+      if (idx !== -1) {
+        const removed = this.taskQueue.splice(idx, 1)[0]
+        console.log(`[queue] Cancelled task id=${id}: "${removed.command.slice(0, 50)}"`)
+        this.sendQueueUpdate()
+      }
+    })
+
     console.log('[orchestrator] Ready')
   }
 
   async processText(text: string): Promise<void> {
-    if (this.isProcessing) return
+    if (this.isProcessing) {
+      this.enqueueTask(text)
+      console.log(`[queue] Text task queued (#${this.taskQueue.length}): "${text.slice(0, 50)}"`)
+      return
+    }
     this.isProcessing = true
     this.aborted = false
     this.sendCommandText(text)
@@ -271,6 +362,11 @@ export class Orchestrator {
     } finally {
       this.isProcessing = false
       this.clearProcessingTimeout()
+      // Show result briefly before starting next queue task
+      if (this.taskQueue.length > 0 && !this.aborted) {
+        await new Promise(r => setTimeout(r, 3000))
+      }
+      this.processQueue()
     }
   }
 
@@ -289,6 +385,7 @@ export class Orchestrator {
       }
     } finally {
       this.isProcessing = false
+      this.processQueue()
     }
   }
 
@@ -317,10 +414,40 @@ export class Orchestrator {
   }
 
   private async processVoice(): Promise<void> {
-    if (!this.pendingAudio || this.isProcessing) {
+    if (!this.pendingAudio) {
       this.sendState('hidden')
       return
     }
+
+    // ─── Another task is running → transcribe and queue (no UI change) ───
+    if (this.isProcessing) {
+      try {
+        const text = await this.transcribe(this.pendingAudio)
+        this.pendingAudio = null
+
+        if (!text || text.trim().length === 0) {
+          console.log('[voice] Empty queue transcription')
+          return
+        }
+
+        console.log(`[voice] Queued: "${text}"`)
+
+        // Dictation is quick — execute immediately even during processing (silent mode)
+        if (this.pendingDictation) {
+          this.pendingDictation = false
+          await this.executeDictation(text, true)
+          return
+        }
+
+        this.enqueueTask(text)
+        this.streamChunk(`[system] ✓ 已排队: "${text.slice(0, 30)}"`)
+      } catch (err) {
+        console.error('[voice] Queue transcription failed:', err)
+      }
+      return
+    }
+
+    // ─── Normal path — no task running ───
     this.isProcessing = true
     this.aborted = false
     this.startProcessingTimeout()
@@ -359,6 +486,11 @@ export class Orchestrator {
       this.isProcessing = false
       this.pendingDictation = false
       this.clearProcessingTimeout()
+      // Show result briefly before starting next queue task
+      if (this.taskQueue.length > 0 && !this.aborted) {
+        await new Promise(r => setTimeout(r, 3000))
+      }
+      this.processQueue()
     }
   }
 
@@ -367,11 +499,17 @@ export class Orchestrator {
    *
    * Flow: raw ASR → DirectAI cleanup (remove filler words, apply corrections)
    * → clipboard inject via Ctrl+V → brief toast → auto-hide.
+   *
+   * @param silent When true (called during processing), don't change overlay state
+   *               or stream chunks — just inject text transparently.
    */
-  private async executeDictation(rawText: string): Promise<void> {
-    console.log(`[dictation] Raw: "${rawText}"`)
-    this.sendState('processing')
-    this.streamChunk('[system] ✨ 整理听写内容...')
+  private async executeDictation(rawText: string, silent = false): Promise<void> {
+    console.log(`[dictation] Raw: "${rawText}"${silent ? ' (silent)' : ''}`)
+
+    if (!silent) {
+      this.sendState('processing')
+      this.streamChunk('[system] ✨ 整理听写内容...')
+    }
 
     try {
       // Clean up dictation text via DirectAI
@@ -383,6 +521,27 @@ export class Orchestrator {
       if (this.aborted) return
 
       console.log(`[dictation] Clean: "${cleanText}"`)
+
+      if (silent) {
+        // Silent mode: inject without touching overlay.
+        // During processing the overlay is showInactive(), so the target window
+        // is still the foreground window — SendInput goes to the right place.
+        const injected = await injectText(cleanText)
+        if (injected) {
+          this.streamChunk(`[system] 📝 已听写: "${cleanText.slice(0, 30)}"`)
+          console.log('[dictation] Silent injection successful')
+        } else {
+          this.streamChunk(`[system] 📝 听写完成 (请手动粘贴)`)
+        }
+        this.history.add({
+          timestamp: Date.now(),
+          command: `[dictation] ${rawText}`,
+          resultSummary: cleanText.slice(0, 200),
+          sourceWindow: this.pendingWindow?.processName || 'unknown',
+          mode: 'dictation',
+        })
+        return
+      }
 
       // CRITICAL: Hide overlay before injection so target window regains focus.
       // SendInput sends keystrokes to the foreground window — if overlay is
@@ -411,8 +570,9 @@ export class Orchestrator {
       }
     } catch (err) {
       console.warn('[dictation] Failed:', err)
-      // Fallback: show raw text
-      this.sendState('result', rawText)
+      if (!silent) {
+        this.sendState('result', rawText)
+      }
     }
   }
 
@@ -432,6 +592,9 @@ export class Orchestrator {
 
     // ─── Media generation (image / video) → route to agent with API docs ───
     if (mode === 'image' || mode === 'video') {
+      // Extend timeout for media generation (video polling can take minutes)
+      this.startProcessingTimeout(true)
+
       // Save for regenerate
       if (!isRegenerate) {
         this.lastMediaCommand = command
@@ -820,20 +983,89 @@ export class Orchestrator {
       const n = Math.round((rawFrames - 1) / 8)
       const numFrames = Math.min(n * 8 + 1, 441)
 
-      parts.push(`## Video Generation API (agnes-video-v2.0)`)
-      parts.push(`Endpoint: POST ${baseUrl}/videos (create task) + GET ${baseUrl}/videos/{task_id} (poll)`)
-      parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
-      parts.push(``)
-      parts.push(`### Flow (use Node.js fetch, NOT PowerShell):`)
-      parts.push(`1. Write .js script: create task → poll every 10s → download video → save`)
-      parts.push(`2. Create task: POST body { "model": "agnes-video-v2.0", "prompt": "...", "width": 1152, "height": 768, "num_frames": ${numFrames}, "frame_rate": ${frameRate} }`)
-      parts.push(`   num_frames rule: must be 8n+1, max 441. Allowed: 81, 121, 161, 241, 441.`)
-      parts.push(`   Response: { "id": "task_xxx", "status": "queued" }`)
-      parts.push(`3. Poll: GET ${baseUrl}/videos/task_xxx every 10 seconds until status is "completed"`)
-      parts.push(`   Response: { "status": "completed", "video_url": "https://..." } or { "status": "processing", "progress": 50 }`)
-      parts.push(`4. Download: use http.get(videoUrl).pipe(fs.createWriteStream('SAVE_PATH'))`)
+      // Check if user selected images → Image-to-Video mode
+      const isImageFile = (f: string) => /\.(png|jpe?g|webp|bmp|gif)$/i.test(f)
+      const selectedImages = context.selectedFiles?.filter(isImageFile) || []
+      const hasImages = selectedImages.length > 0
+
+      if (hasImages) {
+        parts.push(`## Video Generation — IMAGE-TO-VIDEO MODE (agnes-video-v2.0)`)
+        parts.push(`CRITICAL: The user selected image(s). You MUST use image-to-video mode, NOT text-to-video.`)
+        parts.push(`The "image" parameter accepts a PUBLIC URL. You must upload the local image first using the Agnes image API, then pass the returned URL.`)
+        parts.push(``)
+        parts.push(`### Step 1: Upload local image to get a public URL`)
+        parts.push(`POST ${baseUrl}/images/generations`)
+        parts.push(`Body: { "model": "agnes-image-2.1-flash", "prompt": "placeholder", "return_base64": false }`)
+        parts.push(`Response: { "data": [{ "url": "https://..." }] } — use this URL for the video API`)
+        parts.push(`Wait... actually, a simpler approach: use a free image hosting service or convert to base64 data URI.`)
+        parts.push(`SIMPLEST APPROACH: Read the image file as base64, construct a data URI, and pass it as the "image" field.`)
+        parts.push(``)
+        parts.push(`### Step 2: Create video task with image`)
+        parts.push(`POST ${baseUrl}/videos`)
+        parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
+        parts.push(`Body: { "model": "agnes-video-v2.0", "prompt": "MOTION_DESCRIPTION", "image": "IMAGE_URL_OR_DATA_URI", "num_frames": ${numFrames}, "frame_rate": ${frameRate} }`)
+        parts.push(`Response: { "id": "task_xxx", "video_id": "video_xxx", "status": "queued" }`)
+        parts.push(``)
+        parts.push(`### Source images (MUST use at least one):`)
+        for (const f of selectedImages) {
+          parts.push(`- ${f}`)
+        }
+        parts.push(``)
+      } else {
+        parts.push(`## Video Generation — TEXT-TO-VIDEO MODE (agnes-video-v2.0)`)
+        parts.push(`POST ${baseUrl}/videos`)
+        parts.push(`Headers: Authorization: Bearer ${apiKey}, Content-Type: application/json`)
+        parts.push(`Body: { "model": "agnes-video-v2.0", "prompt": "...", "width": 1152, "height": 768, "num_frames": ${numFrames}, "frame_rate": ${frameRate} }`)
+        parts.push(`Response: { "id": "task_xxx", "video_id": "video_xxx", "status": "queued" }`)
+        parts.push(``)
+      }
+
+      parts.push(`### Polling (CRITICAL — follow exactly)`)
+      parts.push(`1. After task creation, save the "video_id" from the response`)
+      parts.push(`2. Poll: GET ${baseUrl.split('/v1')[0]}/agnesapi?video_id=VIDEO_ID`)
+      parts.push(`   Header: Authorization: Bearer ${apiKey}`)
+      parts.push(`3. Poll every 10 seconds. Status values: "queued", "in_progress", "completed", "failed"`)
+      parts.push(`4. When status === "completed", the video URL is in field "remixed_from_video_id" (NOT "video_url")`)
+      parts.push(`5. When status === "failed", print error and exit with code 1`)
       parts.push(``)
       parts.push(`### Video duration: ${duration} seconds (${numFrames} frames at ${frameRate}fps)`)
+      parts.push(`num_frames rule: must be 8n+1, max 441. Allowed: 81, 121, 161, 241, 441.`)
+      parts.push(``)
+      parts.push(`### Node.js script template (copy and adapt):`)
+      parts.push(`const https = require('https'); const http = require('http'); const fs = require('fs');`)
+      parts.push(`const baseUrl = '${baseUrl}'; const apiKey = '${apiKey}';`)
+      parts.push(`function request(method, path, body) {`)
+      parts.push(`  return new Promise((resolve, reject) => {`)
+      parts.push(`    const url = new URL(path.startsWith('http') ? path : baseUrl + path);`)
+      parts.push(`    const opts = { hostname: url.hostname, port: url.port, path: url.pathname + url.search, method, headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' } };`)
+      parts.push(`    if (body) opts.headers['Content-Length'] = Buffer.byteLength(JSON.stringify(body));`)
+      parts.push(`    const req = (url.protocol === 'https:' ? https : http).request(opts, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>{ try { resolve(JSON.parse(d)); } catch(e) { reject('Parse error: '+d.slice(0,200)); } }); });`)
+      parts.push(`    req.on('error', reject); if (body) req.write(JSON.stringify(body)); req.end();`)
+      parts.push(`  });`)
+      parts.push(`}`)
+      parts.push(`async function main() {`)
+      parts.push(`  // 1. Create task`)
+      parts.push(`  const task = await request('POST', '/v1/videos', { model: 'agnes-video-v2.0', prompt: 'YOUR_PROMPT'${hasImages ? `, image: 'IMAGE_URL'` : ', width: 1152, height: 768'}, num_frames: ${numFrames}, frame_rate: ${frameRate} });`)
+      parts.push(`  console.log('Task created:', task.video_id, task.status);`)
+      parts.push(`  if (task.status === 'failed') { console.error('Failed:', task.error); process.exit(1); }`)
+      parts.push(`  // 2. Poll with video_id`)
+      parts.push(`  const pollBase = '${baseUrl.split('/v1')[0]}/agnesapi';`)
+      parts.push(`  for (let i = 0; i < 120; i++) {`)
+      parts.push(`    await new Promise(r => setTimeout(r, 10000));`)
+      parts.push(`    const r = await request('GET', pollBase + '?video_id=' + task.video_id);`)
+      parts.push(`    console.log('Poll:', r.status, r.progress + '%');`)
+      parts.push(`    if (r.status === 'completed') {`)
+      parts.push(`      const videoUrl = r.remixed_from_video_id;`)
+      parts.push(`      console.log('Downloading:', videoUrl);`)
+      parts.push(`      const savePath = '${this.mediaTempDir}/agnes_video_' + Date.now() + '.mp4';`)
+      parts.push(`      await new Promise((res, rej) => { http.get(videoUrl, resp => { const s = fs.createWriteStream(savePath); resp.pipe(s); s.on('finish', () => { console.log('SAVED:', savePath); res(); }); }).on('error', rej); });`)
+      parts.push(`      return;`)
+      parts.push(`    }`)
+      parts.push(`    if (r.status === 'failed') { console.error('Failed:', r.error); process.exit(1); }`)
+      parts.push(`  }`)
+      parts.push(`  console.error('Timeout after 20min'); process.exit(1);`)
+      parts.push(`}`)
+      parts.push(`main().catch(e => { console.error(e); process.exit(1); });`)
       parts.push(``)
     }
 
@@ -1038,12 +1270,101 @@ export class Orchestrator {
     return parts.join('\n')
   }
 
+  // ─── Task Queue ───
+
+  private enqueueTask(command: string): void {
+    const id = ++this.taskQueueId
+
+    // Snapshot the current context from the collector
+    const ctx = this.collector.collect()
+
+    // Copy screenshot to a unique file so subsequent captures don't overwrite it
+    let uniqueScreenshotPath: string | null = null
+    if (ctx.screenshotPath && fs.existsSync(ctx.screenshotPath)) {
+      uniqueScreenshotPath = path.join(os.tmpdir(), `onhands-screenshot-${id}.png`)
+      try {
+        fs.copyFileSync(ctx.screenshotPath, uniqueScreenshotPath)
+      } catch {
+        uniqueScreenshotPath = null
+      }
+    }
+
+    this.taskQueue.push({
+      id,
+      command,
+      window: this.pendingWindow,
+      position: { ...this.pendingPosition },
+      selectedText: this.pendingSelectedText,
+      screenshotPath: uniqueScreenshotPath,
+      clipboard: ctx.clipboard || null,
+      selectedFiles: ctx.selectedFiles || null,
+      workingDirectory: ctx.workingDirectory || null,
+    })
+    console.log(`[queue] Task queued (#${this.taskQueue.length}, id=${id}): "${command.slice(0, 50)}"`)
+    this.sendQueueUpdate()
+  }
+
+  private sendQueueUpdate(): void {
+    const items = this.taskQueue.map(t => ({ id: t.id, command: t.command }))
+    this.win.webContents.send('queue-update', items)
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.taskQueue.length === 0 || this.isProcessing) return
+    const task = this.taskQueue.shift()!
+    console.log(`[queue] Dequeuing task (${this.taskQueue.length} remaining): "${task.command.slice(0, 50)}"`)
+    this.sendQueueUpdate()
+
+    // Restore FULL context snapshot from queue time
+    this.pendingWindow = task.window
+    this.pendingPosition = task.position
+    this.collector.setCapturedWindow(task.window)
+    if (task.selectedText) this.collector.setSelectedText(task.selectedText)
+    this.collector.restoreSnapshot({
+      screenshotPath: task.screenshotPath,
+      clipboard: task.clipboard,
+      selectedFiles: task.selectedFiles,
+      workingDirectory: task.workingDirectory,
+    })
+
+    // Clean up unique screenshot file after context is restored
+    if (task.screenshotPath) {
+      try { fs.unlinkSync(task.screenshotPath) } catch {}
+    }
+
+    this.isProcessing = true
+    this.aborted = false
+    this.startProcessingTimeout()
+    this.sendCommandText(task.command)
+    this.sendState('processing')
+    this.streamChunk(`[system] 队列执行: "${task.command.slice(0, 30)}"`)
+
+    try {
+      await this.executePipeline(task.command)
+    } catch (err) {
+      if (!this.aborted) {
+        this.sendState('error', err instanceof Error ? err.message : 'Execution failed')
+      }
+    } finally {
+      this.isProcessing = false
+      this.clearProcessingTimeout()
+      // Show result briefly before starting next queue task
+      if (this.taskQueue.length > 0 && !this.aborted) {
+        await new Promise(r => setTimeout(r, 3000))
+      }
+      this.processQueue()
+    }
+  }
+
   // ─── Helpers ───
 
   /**
    * Check output for [ONHANDS_MEDIA:type:path] marker and show preview if found.
    * Works for ANY execution mode — media pipeline or general agent.
-   * Returns true if preview was shown.
+   *
+   * When queue has pending tasks, auto-saves media to working directory instead
+   * of showing interactive preview (preview would be immediately replaced anyway).
+   * Returns true if media was handled.
    */
   private tryShowMediaPreview(output: string, context: DesktopContext): boolean {
     const match = output.match(MEDIA_MARKER_RE)
@@ -1062,6 +1383,21 @@ export class Orchestrator {
       targetDir = app.getPath('desktop')
     }
 
+    // Queue has pending tasks → auto-save instead of interactive preview
+    if (this.taskQueue.length > 0) {
+      try {
+        const savedPath = this.saveMedia(filePath, targetDir)
+        const label = mediaType === 'image' ? '图片' : '视频'
+        this.sendState('result', `${label}已保存到: ${path.basename(savedPath)}`)
+        console.log(`[media] Auto-saved (queue active): ${savedPath}`)
+      } catch (err) {
+        console.error('[media] Auto-save failed:', err)
+        this.sendState('result', `${mediaType}已生成: ${path.basename(filePath)}`)
+      }
+      return true
+    }
+
+    // No queue — show interactive preview
     const encodedPath = encodeURIComponent(filePath)
     this.win.webContents.send('state-changed', 'preview', JSON.stringify({
       type: mediaType,
@@ -1098,14 +1434,15 @@ export class Orchestrator {
     }
   }
 
-  /** Start a 5-minute processing timeout to prevent permanent hangs */
-  private startProcessingTimeout(): void {
+  /** Start processing timeout to prevent permanent hangs. Default 5min, media mode 10min. */
+  private startProcessingTimeout(mediaMode = false): void {
     this.clearProcessingTimeout()
+    const timeoutMs = mediaMode ? 10 * 60 * 1000 : 5 * 60 * 1000
     this.processingTimer = setTimeout(() => {
-      console.warn('[orchestrator] Processing timeout (5min) — auto-resetting')
+      console.warn(`[orchestrator] Processing timeout (${timeoutMs / 60000}min) — auto-resetting`)
       this.sendState('error', '操作超时，已自动终止')
       this.abort()
-    }, 5 * 60 * 1000)
+    }, timeoutMs)
   }
 
   private clearProcessingTimeout(): void {
@@ -1244,6 +1581,7 @@ export class Orchestrator {
       this.sendState('error', err instanceof Error ? err.message : 'Resume failed')
     } finally {
       this.isProcessing = false
+      this.processQueue()
     }
   }
 
@@ -1361,6 +1699,8 @@ export class Orchestrator {
     this.isProcessing = false
     this.isRecording = false
     this.pendingAudio = null
+    this.taskQueue = []
+    this.sendQueueUpdate()
     this.lastAbortTime = Date.now()
     this.sendState('hidden')
     console.log('[orchestrator] Abort complete — all state reset')

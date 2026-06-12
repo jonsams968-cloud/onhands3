@@ -11,6 +11,8 @@ declare global {
       onStreamChunk: (cb: (chunk: string) => void) => () => void
       onPermissionRequest: (cb: (req: PermissionRequest) => void) => () => void
       onAskRequest: (cb: (req: AskRequest) => void) => () => void
+      onQueueUpdate: (cb: (items: { id: number; command: string }[]) => void) => () => void
+      onRecordingQueue: (cb: (active: boolean) => void) => () => void
       sendRecording: (base64Audio: string) => Promise<void>
       sendRecordingError: (error: string) => Promise<void>
       textCommand: (text: string) => Promise<void>
@@ -23,6 +25,8 @@ declare global {
       openInFolder: (filePath: string) => Promise<void>
       regenerateMedia: () => Promise<void>
       saveMedia: (sourcePath: string, targetDir: string) => Promise<string | null>
+      cancelQueueTask: (id: number) => Promise<void>
+      onRecordingQueue: (cb: (active: boolean) => void) => () => void
     }
   }
 }
@@ -42,6 +46,8 @@ export default function App() {
   const [previewData, setPreviewData] = useState<{ type: string; path: string; url: string; saveDir: string } | null>(null)
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [queueItems, setQueueItems] = useState<{ id: number; command: string }[]>([])
+  const [isQueueRecording, setIsQueueRecording] = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
@@ -56,7 +62,7 @@ export default function App() {
   useVoiceRecorder(state, {
     onRecordingComplete: (base64) => window.onhands.sendRecording(base64),
     onError: (err) => window.onhands.sendRecordingError(err),
-  })
+  }, isQueueRecording)
 
   // ─── State transitions ───
 
@@ -82,6 +88,8 @@ export default function App() {
           setCommandText('')
           setPreviewData(null)
           setSavedPath(null)
+          setQueueItems([])
+          setIsQueueRecording(false)
           window.onhands.setInteractive(false)
         }, 200)
         return
@@ -155,6 +163,18 @@ export default function App() {
   useEffect(() => {
     return window.onhands.onCommandText((text) => {
       if (text) setCommandText(text)
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.onhands.onQueueUpdate((items) => {
+      setQueueItems(items)
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.onhands.onRecordingQueue((active) => {
+      setIsQueueRecording(active)
     })
   }, [])
 
@@ -340,6 +360,7 @@ export default function App() {
                 {message === 'agent' ? '🤖 Agent' : '⚡ 快速'}
               </span>
               <span className="label-muted">分析中...</span>
+              {queueItems.length > 0 && <span className="queue-badge">队列 {queueItems.length}</span>}
             </div>
           </div>
         )}
@@ -351,12 +372,34 @@ export default function App() {
             <div className="row row--gap-sm row--mb">
               <div className="spinner" />
               <span className="label-muted">{routeMode === 'agent' ? 'Agent 执行中' : '处理中'}...</span>
+              {queueItems.length > 0 && <span className="queue-badge">队列 {queueItems.length}</span>}
             </div>
+            {isQueueRecording && (
+              <div className="recording-indicator">
+                <span className="recording-indicator-dot" />
+                <span className="recording-indicator-text">录音中</span>
+              </div>
+            )}
             {streamLines.length > 0 && (
               <div className="stream-area" ref={streamRef}>
                 {streamLines.map((line, i) => (
                   <div key={i} className={`stream-line ${getStreamLineClass(line)}`}>
                     {formatStreamLine(line)}
+                  </div>
+                ))}
+              </div>
+            )}
+            {queueItems.length > 0 && (
+              <div className="queue-panel">
+                <div className="queue-header">排队任务</div>
+                {queueItems.map(item => (
+                  <div key={item.id} className="queue-item">
+                    <span className="queue-item-text" title={item.command}>{item.command.slice(0, 35)}{item.command.length > 35 ? '...' : ''}</span>
+                    <button className="queue-item-cancel" onClick={() => window.onhands.cancelQueueTask(item.id)} title="取消此任务">
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                      </svg>
+                    </button>
                   </div>
                 ))}
               </div>
