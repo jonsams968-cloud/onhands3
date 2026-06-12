@@ -192,11 +192,14 @@ export class Orchestrator {
             this.pendingSelectedText = sel.text
           }
           this.selectionMonitor.clearSelection()
-          // For dictation routing, only very recent selections (< 5s) should prevent
-          // dictation mode — older selections are likely from different apps/interactions
+          // Routing: only block dictation if selection is from the SAME foreground app.
+          // Cross-app selections are likely stale (user switched away) — don't let them
+          // prevent dictation in the current text field.
           if (e.isIBeam) {
-            const recentSel = sel && (Date.now() - sel.timestamp < 5000) ? sel : null
-            this.pendingDictation = !recentSel?.text
+            const sameApp = sel && this.pendingWindow?.processName &&
+              sel.programName.replace(/\.exe$/i, '').toLowerCase() ===
+              this.pendingWindow.processName.replace(/\.exe$/i, '').toLowerCase()
+            this.pendingDictation = !(sameApp && sel?.text)
           } else {
             this.pendingDictation = false
           }
@@ -234,14 +237,15 @@ export class Orchestrator {
         }
         this.selectionMonitor.clearSelection()
 
-        // I-beam in text field + RECENT selected text → Agent mode (voice = instruction, selection = context)
-        // I-beam in text field + NO recent selection → dictation mode (voice → text injection)
-        // Only selections within 5s are considered "intentional" — older ones are likely
-        // from different apps/interactions and should not block dictation mode
+        // I-beam in text field + selected text from SAME app → Agent mode (voice = instruction, selection = context)
+        // I-beam in text field + selected text from DIFFERENT app → dictation (cross-app selection is likely stale)
+        // I-beam in text field + NO selection → dictation mode (voice → text injection)
         if (e.isIBeam) {
-          const recentSel = sel && (Date.now() - sel.timestamp < 5000) ? sel : null
-          this.pendingDictation = !recentSel?.text
-          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}${recentSel ? '' : sel ? ' (stale selection ignored)' : ''}`)
+          const sameApp = sel && this.pendingWindow?.processName &&
+            sel.programName.replace(/\.exe$/i, '').toLowerCase() ===
+            this.pendingWindow.processName.replace(/\.exe$/i, '').toLowerCase()
+          this.pendingDictation = !(sameApp && sel?.text)
+          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}${!sameApp && sel ? ' (cross-app selection ignored)' : ''}`)
         } else {
           this.pendingDictation = false
         }
