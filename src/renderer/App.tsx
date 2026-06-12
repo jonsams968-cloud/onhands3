@@ -119,7 +119,10 @@ export default function App() {
       // Ask data arrives atomically with state-changed (single IPC)
       // (also parsed in render from message for reliability)
 
-      if (s === 'routing' && d) setRouteMode(d)
+      if (s === 'routing') {
+        setStreamLines([])   // Clear stale stream from previous task
+        if (d) setRouteMode(d)
+      }
 
       if (s === 'preview' && d) {
         try {
@@ -151,7 +154,8 @@ export default function App() {
       if (s === 'result' || s === 'error') {
         // Only push card for pipeline results (have a command text).
         // Dictation/silence results don't go through pipeline → no card.
-        if (commandTextRef.current) {
+        const hasCards = commandTextRef.current
+        if (hasCards) {
           setResultCards(prev => [...prev.slice(-19), {
             id: Date.now(),
             command: commandTextRef.current,
@@ -159,7 +163,9 @@ export default function App() {
             isError: s === 'error',
           }])
         }
-        // Auto-hide after 60s (longer than old 12s to let users read cards)
+        // Auto-hide: 60s for card results (user needs time to read),
+        // 5s for transient results (dictation confirmations, silence, mic errors)
+        const hideDelay = hasCards ? 60000 : 5000
         hideTimer.current = setTimeout(() => {
           setExiting(true)
           setTimeout(() => {
@@ -516,6 +522,25 @@ export default function App() {
             )
           } catch { return null }
         })()}
+
+        {/* ── Fallback inline result/error for non-card results (dictation, silence, mic errors) ── */}
+        {(state === 'result' || state === 'error') && resultCards.length === 0 && (
+          <div className="row row--start row--gap-md">
+            <div className={`status-icon ${state === 'result' ? 'status-icon--success' : 'status-icon--error'}`}>
+              {state === 'result' ? (
+                <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                  <path d="M1 4L3.5 6.5L9 1" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              ) : (
+                <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                  <path d="M1 1L7 7M7 1L1 7" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              )}
+            </div>
+            <div className={state === 'result' ? 'result-text' : 'error-text'}
+              dangerouslySetInnerHTML={{ __html: state === 'result' ? renderMarkdown(message) : escapeHtml(message) }} />
+          </div>
+        )}
 
         {/* ── Result Cards — hidden during preview/ask/confirm to avoid visual conflicts ── */}
         {resultCards.length > 0 && state !== 'preview' && state !== 'ask' && state !== 'confirm' && (
