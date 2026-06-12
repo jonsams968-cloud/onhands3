@@ -510,6 +510,7 @@ export default function SettingsApp() {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [lang, setLang] = useState<Lang>('zh')
   const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   // Load config on mount
   useEffect(() => {
@@ -540,14 +541,17 @@ export default function SettingsApp() {
   const setCfg = (k: keyof Config, v: any) => {
     if (!cfg) return
     setRawCfg({ ...cfg, [k]: v })
+    setSaved(false)
   }
 
   const handleSave = async () => {
-    if (!cfg || !api) return
+    if (!cfg || !api || saving) return
     setSaving(true)
     try {
       const updated = await api.settingsSave({ ...cfg, language: lang })
       setRawCfg(updated)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 1500)
     } catch (err) {
       console.error('[settings] Save failed:', err)
     }
@@ -600,8 +604,8 @@ export default function SettingsApp() {
 
         <div className="settings-footer">
           <span className="settings-footer-version">v0.48</span>
-          <button className="btn btn--primary" onClick={handleSave} disabled={saving}>
-            {saving ? '...' : txt.saveChanges}
+          <button className={`btn btn--primary ${saved ? 'btn--saved' : ''}`} onClick={handleSave} disabled={saving}>
+            {saving ? '...' : saved ? txt.saved : txt.saveChanges}
           </button>
         </div>
       </div>
