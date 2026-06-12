@@ -1,6 +1,6 @@
 {
   "name": "onhands3",
-  "version": "0.1.0",
+  "version": "0.48.0",
   "description": "AI-driven smart cursor — voice/text commands via mouse long-press, executed by AI agents",
   "main": "out/main/index.js",
   "scripts": {
@@ -9,7 +9,9 @@
     "preview": "node scripts/dev.js preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",
@@ -25,9 +27,51 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "cross-env": "^10.1.0",
-    "electron": "^35.0.0",
+    "electron": "^37.0.0",
+    "electron-builder": "^26.15.2",
     "electron-vite": "^3.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "build": {
+    "appId": "com.onhands3.app",
+    "productName": "OnHands3",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "build/tray.ico",
+        "to": "tray.ico"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OnHands3"
+    }
   }
 }

@@ -1,12 +1,25 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell, protocol, net, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
 import { MouseMonitor } from './input/MouseMonitor'
 import { Orchestrator } from './orchestrator/Orchestrator'
-import { loadConfig } from './config'
+import { loadConfig, saveConfig } from './config'
 
 let mainWindow: BrowserWindow | null = null
+let settingsWindow: BrowserWindow | null = null
 let mouseMonitor: MouseMonitor | null = null
 let orchestrator: Orchestrator | null = null
+let tray: Tray | null = null
+
+// Resolve icon paths — works in both dev and packaged mode
+function getIconPath(name: string): string {
+  // In production, resources are in resources/ (asar-unpacked or extraResources)
+  const prodPath = path.join(process.resourcesPath, name)
+  if (!process.env.ELECTRON_RENDERER_URL && require('fs').existsSync(prodPath)) {
+    return prodPath
+  }
+  // In dev, use build/ directory
+  return path.join(__dirname, '../../build', name)
+}
 
 function createWindow(): BrowserWindow {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
@@ -26,6 +39,7 @@ function createWindow(): BrowserWindow {
     hasShadow: false,
     show: false,
     backgroundColor: '#00000000',
+    icon: nativeImage.createFromPath(getIconPath('icon.ico')),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -62,6 +76,104 @@ function createWindow(): BrowserWindow {
   return win
 }
 
+function createTray(): Tray {
+  const icon = nativeImage.createFromPath(getIconPath('tray.ico'))
+  const t = new Tray(icon)
+  t.setToolTip('OnHands3')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: '设置 / Settings',
+      click: () => openSettingsWindow(),
+    },
+    { type: 'separator' },
+    {
+      label: '退出 / Quit',
+      click: () => {
+        app.quit()
+      },
+    },
+  ])
+
+  t.setContextMenu(contextMenu)
+
+  // Double-click tray icon to toggle overlay
+  t.on('double-click', () => {
+    if (!mainWindow) return
+    if (mainWindow.isVisible()) {
+      mainWindow.hide()
+    } else {
+      mainWindow.show()
+      mainWindow.setIgnoreMouseEvents(false)
+      mainWindow.focus()
+    }
+  })
+
+  return t
+}
+
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus()
+    return
+  }
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const wW = 720, wH = 520
+  settingsWindow = new BrowserWindow({
+    width: wW,
+    height: wH,
+    x: Math.round((sw - wW) / 2),
+    y: Math.round((sh - wH) / 2),
+    frame: false,
+    resizable: false,
+    backgroundColor: '#ffffff',
+    title: 'OnHands3 Settings',
+    icon: nativeImage.createFromPath(getIconPath('icon.ico')),
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  if (process.env.ELECTRON_RENDERER_URL) {
+    settingsWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/settings.html`)
+  } else {
+    settingsWindow.loadFile(path.join(__dirname, '../renderer/settings.html'))
+  }
+  settingsWindow.on('closed', () => { settingsWindow = null })
+}
+
+// ─── Detect installed Agent CLIs ───
+function detectAgents(): { name: string; path: string; installed: boolean }[] {
+  const agents = [
+    { name: 'Claude Code', cmd: 'claude', env: 'claudeCodePath' },
+    { name: 'Codex', cmd: 'codex', env: 'codexPath' },
+    { name: 'OpenCode', cmd: 'opencode', env: 'opencodePath' },
+  ]
+  return agents.map(a => {
+    const config = loadConfig()
+    const customPath = (config as any)[a.env] as string
+    let found = false
+    let resolvedPath = ''
+    try {
+      const { execFileSync } = require('child_process')
+      if (customPath) {
+        resolvedPath = customPath
+        found = true
+      } else if (process.platform === 'win32') {
+        resolvedPath = execFileSync('where', [a.cmd], { encoding: 'utf-8' }).split('\n')[0].trim()
+        found = !!resolvedPath
+      } else {
+        resolvedPath = execFileSync('which', [a.cmd], { encoding: 'utf-8' }).trim()
+        found = !!resolvedPath
+      }
+    } catch {
+      found = false
+    }
+    return { name: a.name, path: resolvedPath || '', installed: found }
+  })
+}
+
 // ─── Single instance lock — prevent multiple OnHands3 processes ───
 const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
@@ -91,13 +203,20 @@ app.whenReady().then(async () => {
 
   const config = loadConfig()
   console.log('[main] OnHands3 starting...')
+  console.log(`[main] Config: sttMode=${config.sttMode}, dataDir=${config.dataDir}`)
+  console.log(`[main] API configured: ${!!config.aiApiKey}`)
 
   mainWindow = createWindow()
+  console.log('[main] Overlay window created')
+
+  // System tray
+  tray = createTray()
 
   mouseMonitor = new MouseMonitor(config.longPressDuration, config.dragThresholdPx)
   orchestrator = new Orchestrator(mainWindow, mouseMonitor)
 
   await orchestrator.initialize()
+  console.log('[main] Orchestrator initialized')
 
   // IPC: toggle mouse events — forward:true keeps mousemove events flowing
   ipcMain.handle('window:interactive', (_e, v: boolean) => {
@@ -147,6 +266,40 @@ app.whenReady().then(async () => {
     return net.fetch(`file:///${filePath.replace(/\\/g, '/')}`)
   })
 
+  // ─── Settings IPC ───
+
+  ipcMain.handle('settings:load', () => {
+    return loadConfig()
+  })
+
+  ipcMain.handle('settings:save', (_e, data: Record<string, any>) => {
+    const updated = saveConfig(data)
+    // Re-init mouse monitor if interaction settings changed
+    if (data.longPressDuration !== undefined || data.dragThresholdPx !== undefined) {
+      if (mouseMonitor) {
+        mouseMonitor.stop().then(() => {
+          mouseMonitor = new MouseMonitor(updated.longPressDuration, updated.dragThresholdPx)
+          mouseMonitor.start().catch(() => {})
+        })
+      }
+    }
+    return updated
+  })
+
+  ipcMain.handle('settings:detectAgents', () => {
+    return detectAgents()
+  })
+
+  ipcMain.handle('settings:openSettings', () => {
+    openSettingsWindow()
+  })
+
+  ipcMain.handle('settings:closeWindow', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.close()
+    }
+  })
+
   // Keyboard shortcuts for testing
   globalShortcut.register('CommandOrControl+Shift+1', () => {
     mainWindow?.webContents.send('state-changed', 'recording')
@@ -189,6 +342,11 @@ app.whenReady().then(async () => {
     mainWindow?.hide()
   })
 
+  // Settings window: Ctrl+Shift+S
+  globalShortcut.register('CommandOrControl+Shift+S', () => {
+    openSettingsWindow()
+  })
+
   // Force kill: Ctrl+Shift+Escape (always available, even when overlay is hidden)
   globalShortcut.register('CommandOrControl+Shift+Escape', () => {
     console.log('[main] Force kill — Ctrl+Shift+Escape pressed')
@@ -207,6 +365,7 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 
 app.on('before-quit', async () => {
   globalShortcut.unregisterAll()
+  if (tray) { tray.destroy(); tray = null }
   if (orchestrator) orchestrator.destroy()
   if (mouseMonitor) await mouseMonitor.stop()
 })

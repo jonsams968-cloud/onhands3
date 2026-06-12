@@ -38,4 +38,10 @@ contextBridge.exposeInMainWorld('onhands', {
   openInFolder: (filePath: string) => ipcRenderer.invoke('media:openInFolder', filePath),
   regenerateMedia: () => ipcRenderer.invoke('media:regenerate'),
   saveMedia: (sourcePath: string, targetDir: string) => ipcRenderer.invoke('media:save', sourcePath, targetDir),
+
+  // Settings IPC
+  settingsLoad: () => ipcRenderer.invoke('settings:load'),
+  settingsSave: (data: Record<string, any>) => ipcRenderer.invoke('settings:save', data),
+  settingsDetectAgents: () => ipcRenderer.invoke('settings:detectAgents'),
+  settingsCloseWindow: () => ipcRenderer.invoke('settings:closeWindow'),
 })

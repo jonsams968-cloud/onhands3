@@ -9,3 +9,5 @@ test-electron.js
 screenshot_*.png
 multica-main/
 test-scripts/
+preview-settings.html
+vite.preview.config.ts
