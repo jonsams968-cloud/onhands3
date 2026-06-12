@@ -5,6 +5,8 @@ import * as os from 'os'
 import * as path from 'path'
 import { MouseMonitor } from '../input/MouseMonitor'
 import { SelectionMonitor } from '../input/SelectionMonitor'
+import { detectCaret, type CaretContext } from '../input/CaretDetector'
+import { injectText } from '../input/ClipboardInjector'
 import { ContextCollector } from '../context/ContextCollector'
 import { RecentHistory } from '../history/RecentHistory'
 import { Router } from '../ai/Router'
@@ -75,6 +77,8 @@ export class Orchestrator {
   private pendingAudio: string | null = null
   private pendingPosition = { x: 0, y: 0 }
   private pendingWindow: DesktopContext['activeWindow'] = null
+  private pendingDictation = false
+  private pendingCaret: CaretContext | null = null
   private stt: any = null
   private currentAgentProcess: ChildProcess | null = null
   private misfireTimer: ReturnType<typeof setTimeout> | null = null
@@ -158,6 +162,13 @@ export class Orchestrator {
       this.pendingAudio = null
       this.pendingWindow = null
       this.isRecording = true
+
+      // Detect caret BEFORE hiding overlay — this determines dictation vs command mode
+      this.pendingCaret = await detectCaret()
+      this.pendingDictation = this.pendingCaret.inInputField
+      if (this.pendingDictation) {
+        console.log(`[input] Caret detected → dictation mode`)
+      }
 
       // Hide overlay first to capture the REAL foreground window
       if (this.win.isVisible()) {
@@ -326,6 +337,14 @@ export class Orchestrator {
       }
 
       console.log(`[voice] "${text}"`)
+
+      // ─── Dictation mode: clean up text and inject into input field ───
+      if (this.pendingDictation) {
+        await this.executeDictation(text)
+        return
+      }
+
+      // ─── Normal command mode ───
       this.sendCommandText(text)
       this.streamChunk(`[system] 识别结果: "${text}"`)
 
@@ -336,7 +355,57 @@ export class Orchestrator {
       }
     } finally {
       this.isProcessing = false
+      this.pendingDictation = false
+      this.pendingCaret = null
       this.clearProcessingTimeout()
+    }
+  }
+
+  /**
+   * Dictation mode: clean up ASR text and inject into the input field.
+   *
+   * Flow: raw ASR → DirectAI cleanup (remove filler words, apply corrections)
+   * → clipboard inject via Ctrl+V → brief toast → auto-hide.
+   */
+  private async executeDictation(rawText: string): Promise<void> {
+    console.log(`[dictation] Raw: "${rawText}"`)
+    this.sendState('processing')
+    this.streamChunk('[system] ✨ 整理听写内容...')
+
+    try {
+      // Clean up dictation text via DirectAI
+      this.fetchController = new AbortController()
+      const result = await this.directAI.cleanDictation(rawText, this.fetchController.signal)
+      this.fetchController = null
+      const cleanText = result.output || rawText
+
+      if (this.aborted) return
+
+      console.log(`[dictation] Clean: "${cleanText}"`)
+
+      // Inject into input field via clipboard
+      const injected = await injectText(cleanText)
+
+      if (this.aborted) return
+
+      if (injected) {
+        this.sendState('result', `📝 ${cleanText}`)
+        this.history.add({
+          timestamp: Date.now(),
+          command: `[dictation] ${rawText}`,
+          resultSummary: cleanText.slice(0, 200),
+          sourceWindow: this.pendingWindow?.processName || 'unknown',
+          mode: 'dictation',
+        })
+        console.log('[dictation] Text injected successfully')
+      } else {
+        // Fallback: show text in overlay for manual copy
+        this.sendState('result', cleanText)
+      }
+    } catch (err) {
+      console.warn('[dictation] Failed:', err)
+      // Fallback: show raw text
+      this.sendState('result', rawText)
     }
   }
 

@@ -87,4 +87,65 @@ export class DirectAI {
     if (ctx.clipboard) parts.push(`Clipboard: ${ctx.clipboard.slice(0, 500)}`)
     return parts.length > 0 ? `Context:\n${parts.join('\n')}` : ''
   }
+
+  /**
+   * Clean up raw ASR dictation text:
+   * - Remove filler words (嗯, 额, 那个, emm, like, etc.)
+   * - Apply self-corrections ("15号...不对16号" → "16号")
+   * - Add proper punctuation
+   * - Keep original meaning and tone
+   */
+  async cleanDictation(rawText: string, abortSignal?: AbortSignal): Promise<ExecutionResult> {
+    const startTime = Date.now()
+
+    const body = {
+      model: this.model,
+      max_tokens: 512,
+      temperature: 0.1,
+      messages: [
+        {
+          role: 'system',
+          content: `你是语音听写清洗器。将 ASR 原始文本转为干净的书面文字，直接输出结果文字，不要任何解释或前缀。
+
+规则：
+1. 去除语气词和口癖：嗯、额、那个、就是、然后、emm、like、you know
+2. 处理自我修正："15号...不对16号" → "16号"，"下周...不这周" → "这周"
+3. 去除重复词："我我我觉得" → "我觉得"
+4. 添加标点符号（逗号、句号、问号）
+5. 保持口语自然感，不要过度书面化
+6. 只输出清洗后的文字，不要任何额外内容`,
+        },
+        {
+          role: 'user',
+          content: rawText,
+        },
+      ],
+    }
+
+    try {
+      console.log(`[dictation] Cleaning via ${this.baseUrl} model=${this.model}`)
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortSignal,
+      })
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '')
+        console.warn(`[dictation] API error: ${response.status} ${errText.slice(0, 200)}`)
+        return { success: false, output: rawText, durationMs: Date.now() - startTime, error: `Dictation cleanup failed: ${response.status}` }
+      }
+
+      const result = await response.json() as { choices: Array<{ message: { content: string } }> }
+      const text = result.choices?.[0]?.message?.content?.trim() || rawText
+      console.log(`[dictation] API response: "${text.slice(0, 100)}"`)
+
+      return { success: true, output: text, durationMs: Date.now() - startTime }
+    } catch (err: any) {
+      console.warn(`[dictation] Cleanup failed: ${err.message || err}`)
+      // Fallback: return raw text if AI cleanup fails
+      return { success: true, output: rawText, durationMs: Date.now() - startTime }
+    }
+  }
 }

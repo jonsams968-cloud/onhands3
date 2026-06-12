@@ -26,7 +26,8 @@ interface ASRResult {
 }
 
 interface ASRResultData {
-  slice_type: number
+  slice_type: number  // 0=start, 1=middle, 2=end (stable)
+  index: number       // Sentence index — increments for each sentence
   voice_text_str: string
 }
 
@@ -159,6 +160,9 @@ export class TencentASR {
       let finalText = ''
       let intermediateText = ''
       let streaming = false
+      // Accumulate stable slices (slice_type=2) by their sentence index
+      const stableSlices = new Map<number, string>()
+      let maxSliceIndex = -1
 
       ws.addEventListener('open', () => {
         console.log('[tencent-asr] WebSocket connected, waiting for handshake...')
@@ -217,21 +221,39 @@ export class TencentASR {
 
           // Collect results — result may be a string or an object { slice_type, voice_text_str }
           if (data.result) {
+            const resultData = data.result as ASRResultData
             const text = typeof data.result === 'string'
               ? data.result
-              : (data.result as ASRResultData).voice_text_str || ''
+              : resultData.voice_text_str || ''
 
-            if (data.final === 1) {
-              finalText = text
-              console.log(`[tencent-asr] Final: "${finalText.slice(0, 80)}"`)
+            const sliceType = resultData.slice_type ?? -1
+            const sliceIndex = resultData.index ?? 0
+
+            if (sliceType === 2) {
+              // slice_type=2 = stable sentence result — accumulate by index
+              stableSlices.set(sliceIndex, text)
+              maxSliceIndex = Math.max(maxSliceIndex, sliceIndex)
+              console.log(`[tencent-asr] Slice ${sliceIndex} stable: "${text}"`)
             } else if (text) {
+              // slice_type=0/1 = intermediate (in-progress) — just track latest
               intermediateText = text
-              console.log(`[tencent-asr] Intermediate: "${intermediateText.slice(0, 60)}"`)
+              console.log(`[tencent-asr] Intermediate: "${text.slice(0, 60)}"`)
             }
           }
 
           // final=1 means recognition complete
           if (data.final === 1) {
+            // Assemble all stable slices in index order
+            if (stableSlices.size > 0) {
+              const parts: string[] = []
+              for (let i = 0; i <= maxSliceIndex; i++) {
+                if (stableSlices.has(i)) {
+                  parts.push(stableSlices.get(i)!)
+                }
+              }
+              finalText = parts.join('')
+            }
+            console.log(`[tencent-asr] Final: "${finalText || intermediateText}"`)
             settled = true
             clearTimeout(timeout)
             setTimeout(() => {
