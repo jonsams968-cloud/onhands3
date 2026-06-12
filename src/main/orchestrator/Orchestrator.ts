@@ -383,7 +383,13 @@ export class Orchestrator {
 
       console.log(`[dictation] Clean: "${cleanText}"`)
 
-      // Inject into input field via clipboard
+      // CRITICAL: Hide overlay before injection so target window regains focus.
+      // SendInput sends keystrokes to the foreground window — if overlay is
+      // visible it would receive the characters instead of the input field.
+      this.win.hide()
+      this.win.setIgnoreMouseEvents(true, { forward: true })
+      await new Promise(r => setTimeout(r, 100))  // Wait for target app to regain foreground
+
       const injected = await injectText(cleanText)
 
       if (this.aborted) return
@@ -1107,19 +1113,20 @@ export class Orchestrator {
 
   private sendState(state: UIState, data?: string): void {
     this.win.webContents.send('state-changed', state, data)
-    if (!this.win.isVisible() && state !== 'hidden') {
-      this.win.show()
-    }
     if (state === 'hidden') {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
       this.win.webContents.send('command-text', '')
     } else if (state === 'ask' || state === 'confirm' || state === 'preview') {
-      // Ask/confirm/preview need immediate interactivity — set in main process
-      // (don't rely on renderer IPC round-trip which causes click-through delay)
+      // Ask/confirm/preview need immediate interactivity — activate window
+      if (!this.win.isVisible()) this.win.show()
       this.win.setIgnoreMouseEvents(false)
       this.win.focus()
       this.win.moveTop()
+    } else if (!this.win.isVisible()) {
+      // Recording/processing/result/etc — show WITHOUT stealing focus
+      // so target app stays in foreground (critical for SendInput injection)
+      this.win.showInactive()
     }
 
     // ESC handler: register for active states (long-press 5s → force kill)
