@@ -20,8 +20,8 @@ export class MouseMonitor extends EventEmitter {
   private mouseDownTime = 0
   private isLongPress = false
   private wasMouseDown = false
-  private readonly longPressMs: number
-  private readonly dragThresholdPx: number
+  private longPressMs: number
+  private dragThresholdPx: number
   private user32: any = null
   private ibeamHandle: number = 0
   /** Cursor shape captured at mouse-down time */
@@ -29,6 +29,12 @@ export class MouseMonitor extends EventEmitter {
 
   constructor(longPressMs = 800, dragThresholdPx = 15) {
     super()
+    this.longPressMs = longPressMs
+    this.dragThresholdPx = dragThresholdPx
+  }
+
+  /** Update settings without stopping/restarting the monitor */
+  updateSettings(longPressMs: number, dragThresholdPx: number): void {
     this.longPressMs = longPressMs
     this.dragThresholdPx = dragThresholdPx
   }

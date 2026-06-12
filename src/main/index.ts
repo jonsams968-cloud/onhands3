@@ -282,14 +282,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('settings:save', (_e, data: Record<string, any>) => {
     const updated = saveConfig(data)
-    // Re-init mouse monitor if interaction settings changed
-    if (data.longPressDuration !== undefined || data.dragThresholdPx !== undefined) {
-      if (mouseMonitor) {
-        mouseMonitor.stop().then(() => {
-          mouseMonitor = new MouseMonitor(updated.longPressDuration, updated.dragThresholdPx)
-          mouseMonitor.start().catch(() => {})
-        })
-      }
+    // Update mouse monitor settings in-place (don't recreate — orchestrator
+    // event listeners are bound to the original instance)
+    if (mouseMonitor && (data.longPressDuration !== undefined || data.dragThresholdPx !== undefined)) {
+      mouseMonitor.updateSettings(updated.longPressDuration, updated.dragThresholdPx)
     }
     return updated
   })
