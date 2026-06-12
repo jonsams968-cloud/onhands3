@@ -554,8 +554,9 @@ export default function SettingsApp() {
       setTimeout(() => setSaved(false), 1500)
     } catch (err) {
       console.error('[settings] Save failed:', err)
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   if (!cfg) return null
@@ -605,7 +606,7 @@ export default function SettingsApp() {
         <div className="settings-footer">
           <span className="settings-footer-version">v0.48</span>
           <button className={`btn btn--primary ${saved ? 'btn--saved' : ''}`} onClick={handleSave} disabled={saving}>
-            {saving ? '...' : saved ? txt.saved : txt.saveChanges}
+            {saving ? '...' : saved ? ('✓ ' + txt.saved) : txt.saveChanges}
           </button>
         </div>
       </div>
