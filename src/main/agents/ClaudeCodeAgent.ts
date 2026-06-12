@@ -66,7 +66,6 @@ export class ClaudeCodeAgent implements Agent {
 
       proc.stdout.on('data', (chunk: string) => {
         stdout += chunk
-        opts?.onOutput?.(chunk)
 
         for (const line of chunk.split('\n')) {
           if (!line.trim()) continue
@@ -81,16 +80,20 @@ export class ClaudeCodeAgent implements Agent {
                 if (b.type === 'text' && b.text) {
                   lastText = b.text
                   console.log(`[agent] Text: ${b.text.slice(0, 100)}...`)
+                  opts?.onEvent?.({ type: 'text', text: b.text })
                 }
                 if (b.type === 'tool_use') {
                   console.log(`[agent] Tool: ${b.name}(${JSON.stringify(b.input || {}).slice(0, 80)})`)
+                  opts?.onEvent?.({ type: 'tool_use', name: b.name, input: b.input })
                 }
               }
             } else if (type === 'result') {
               console.log(`[agent] Result: ${String(event.result || '').slice(0, 100)}`)
+              opts?.onEvent?.({ type: 'result', result: event.result || '' })
             } else if (type === 'system') {
               if (event.session_id) capturedSessionId = event.session_id
               console.log(`[agent] System: session=${event.session_id || '?'}`)
+              opts?.onEvent?.({ type: 'system', sessionId: event.session_id || '' })
             } else if (eventCount <= 3) {
               console.log(`[agent] Event #${eventCount}: type=${type}`)
             }

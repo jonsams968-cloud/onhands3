@@ -12,7 +12,7 @@ import { Router } from '../ai/Router'
 import { DirectAI } from '../ai/DirectAI'
 import { AgentDetector } from '../agents/AgentDetector'
 import { ClaudeCodeAgent } from '../agents/ClaudeCodeAgent'
-import type { Agent } from '../agents/types'
+import type { Agent, AgentEvent } from '../agents/types'
 import { loadConfig } from '../config'
 import { PermissionServer } from '../permission/PermissionServer'
 import type { DesktopContext, ExecutionResult, UIState } from '../../shared/types'
@@ -714,26 +714,9 @@ export class Orchestrator {
       onProcessSpawn: (proc) => {
         this.currentAgentProcess = proc
       },
-      onOutput: (chunk) => {
-        for (const line of chunk.split('\n')) {
-          if (!line.trim()) continue
-          try {
-            const event = JSON.parse(line)
-            const type = event.type || '?'
-
-            if (type === 'assistant') {
-              const blocks = event.message?.content || []
-              for (const b of blocks) {
-                if (b.type === 'text' && b.text) {
-                  this.streamChunk(`[text] ${b.text.slice(0, 120)}`)
-                }
-                if (b.type === 'tool_use') {
-                  this.streamChunk(`[tool] ${b.name}`)
-                }
-              }
-            }
-          } catch {}
-        }
+      onEvent: (ev: AgentEvent) => {
+        if (ev.type === 'text') this.streamChunk(`[text] ${ev.text.slice(0, 120)}`)
+        else if (ev.type === 'tool_use') this.streamChunk(`[tool] ${ev.name}`)
       },
     })
 
@@ -762,7 +745,7 @@ export class Orchestrator {
     console.log(`[pipeline] Agent prompt:\n${prompt.slice(0, 300)}...`)
 
     let askTriggered = false
-    let capturedSessionId = ''  // Track session ID from stream events (session is TDZ during onOutput)
+    let capturedSessionId = ''  // Track session ID from stream events (session is TDZ during onEvent)
 
     const session = await this.agent.execute(prompt, {
       workingDirectory: context.workingDirectory,
@@ -770,73 +753,58 @@ export class Orchestrator {
       onProcessSpawn: (proc) => {
         this.currentAgentProcess = proc
       },
-      onOutput: (chunk) => {
-        for (const line of chunk.split('\n')) {
-          if (!line.trim()) continue
-          try {
-            const event = JSON.parse(line)
-            const type = event.type || '?'
+      onEvent: (ev: AgentEvent) => {
+        if (askTriggered) return
 
-            if (type === 'assistant') {
-              const blocks = event.message?.content || []
-              for (const b of blocks) {
-                if (b.type === 'text' && b.text) {
-                  // Check for ASK marker in the full accumulated text
-                  const ask = extractAskMarker(b.text)
-                  if (ask && ask.options?.length > 0 && this.askDepth < 2) {
-                    console.log(`[ask] Detected: "${ask.question}" (${ask.options.length} options)`)
-                    askTriggered = true
+        if (ev.type === 'text') {
+          // Check for ASK marker in the text
+          const ask = extractAskMarker(ev.text)
+          if (ask && ask.options?.length > 0 && this.askDepth < 2) {
+            console.log(`[ask] Detected: "${ask.question}" (${ask.options.length} options)`)
+            askTriggered = true
 
-                    // Save state for resume — use capturedSessionId, NOT session (which is TDZ here)
-                    this.askSessionId = capturedSessionId || null
-                    this.askContext = context
-                    this.askResolution = resolution
-                    this.askDepth++
+            // Save state for resume — use capturedSessionId, NOT session (which is TDZ here)
+            this.askSessionId = capturedSessionId || null
+            this.askContext = context
+            this.askResolution = resolution
+            this.askDepth++
 
-                    // Show ask UI — send ask data as state-changed data (single IPC = atomic)
-                    this.sendState('ask', JSON.stringify(ask))
+            // Show ask UI — send ask data as state-changed data (single IPC = atomic)
+            this.sendState('ask', JSON.stringify(ask))
 
-                    // Set 30s timeout
-                    if (this.askTimer) clearTimeout(this.askTimer)
-                    this.askTimer = setTimeout(() => {
-                      console.log('[ask] Timeout — aborting')
-                      this.abort()
-                    }, 30_000)
+            // Set 30s timeout
+            if (this.askTimer) clearTimeout(this.askTimer)
+            this.askTimer = setTimeout(() => {
+              console.log('[ask] Timeout — aborting')
+              this.abort()
+            }, 30_000)
 
-                    // Kill the agent process — will resume after user answers
-                    if (this.currentAgentProcess) {
-                      try {
-                        require('child_process').execFileSync(
-                          'taskkill.exe', ['/pid', String(this.currentAgentProcess.pid), '/T', '/F'],
-                          { stdio: 'ignore', windowsHide: true },
-                        )
-                      } catch {}
-                      this.currentAgentProcess = null
-                    }
-                    return  // Stop processing this chunk
-                  }
-
-                  // Normal text streaming (skip the ASK marker itself)
-                  const displayText = b.text.replace(/\[ONHANDS_ASK:[\s\S]*?\]/, '').trim()
-                  if (displayText) {
-                    this.streamChunk(`[text] ${displayText.slice(0, 120)}`)
-                  }
-                }
-                if (b.type === 'tool_use' && !askTriggered) {
-                  const detail = JSON.stringify(b.input || {}).slice(0, 80)
-                  this.streamChunk(`[tool] ${b.name}(${detail})`)
-                }
-              }
-            } else if (type === 'result') {
-              // Will be shown in result state
-            } else if (type === 'system') {
-              if (event.session_id) capturedSessionId = event.session_id
-              this.streamChunk(`[system] session=${event.session_id?.slice(0, 8) || '?'}`)
+            // Kill the agent process — will resume after user answers
+            if (this.currentAgentProcess) {
+              try {
+                require('child_process').execFileSync(
+                  'taskkill.exe', ['/pid', String(this.currentAgentProcess.pid), '/T', '/F'],
+                  { stdio: 'ignore', windowsHide: true },
+                )
+              } catch {}
+              this.currentAgentProcess = null
             }
-          } catch {
-            if (!askTriggered) this.streamChunk(line.slice(0, 120))
+            return
           }
+
+          // Normal text streaming (skip the ASK marker itself)
+          const displayText = ev.text.replace(/\[ONHANDS_ASK:[\s\S]*?\]/, '').trim()
+          if (displayText) {
+            this.streamChunk(`[text] ${displayText.slice(0, 120)}`)
+          }
+        } else if (ev.type === 'tool_use') {
+          const detail = JSON.stringify(ev.input || {}).slice(0, 80)
+          this.streamChunk(`[tool] ${ev.name}(${detail})`)
+        } else if (ev.type === 'system') {
+          if (ev.sessionId) capturedSessionId = ev.sessionId
+          this.streamChunk(`[system] session=${ev.sessionId?.slice(0, 8) || '?'}`)
         }
+        // 'result' type: will be shown in result state — no action here
       },
     })
 
@@ -1487,7 +1455,7 @@ export class Orchestrator {
     this.streamChunk(`[system] 用户选择了: ${optionLabel}`)
 
     try {
-      let resumeSessionId = ''  // Track session ID from stream events (session is TDZ during onOutput)
+      let resumeSessionId = ''  // Track session ID from stream events (session is TDZ during onEvent)
 
       const session = await this.agent.resume(this.askSessionId, resumePrompt, {
         workingDirectory: this.askContext?.workingDirectory || process.cwd(),
@@ -1495,56 +1463,40 @@ export class Orchestrator {
         onProcessSpawn: (proc) => {
           this.currentAgentProcess = proc
         },
-        onOutput: (chunk) => {
-          for (const line of chunk.split('\n')) {
-            if (!line.trim()) continue
-            try {
-              const event = JSON.parse(line)
-              const type = event.type || '?'
+        onEvent: (ev: AgentEvent) => {
+          if (ev.type === 'text') {
+            const ask = extractAskMarker(ev.text)
+            if (ask && ask.options?.length > 0 && this.askDepth < 2) {
+              console.log(`[ask] Nested ask detected: "${ask.question}"`)
+              this.askSessionId = resumeSessionId || this.askSessionId
+              this.askDepth++
 
-              if (type === 'assistant') {
-                const blocks = event.message?.content || []
-                for (const b of blocks) {
-                  if (b.type === 'text' && b.text) {
-                    const ask = extractAskMarker(b.text)
-                    if (ask && ask.options?.length > 0 && this.askDepth < 2) {
-                      console.log(`[ask] Nested ask detected: "${ask.question}"`)
-                      this.askSessionId = resumeSessionId || this.askSessionId
-                      this.askDepth++
+              this.sendState('ask', JSON.stringify(ask))
 
-                      this.sendState('ask', JSON.stringify(ask))
+              if (this.askTimer) clearTimeout(this.askTimer)
+              this.askTimer = setTimeout(() => {
+                console.log('[ask] Timeout — aborting')
+                this.abort()
+              }, 30_000)
 
-                      if (this.askTimer) clearTimeout(this.askTimer)
-                      this.askTimer = setTimeout(() => {
-                        console.log('[ask] Timeout — aborting')
-                        this.abort()
-                      }, 30_000)
-
-                      if (this.currentAgentProcess) {
-                        try {
-                          require('child_process').execFileSync(
-                            'taskkill.exe', ['/pid', String(this.currentAgentProcess.pid), '/T', '/F'],
-                            { stdio: 'ignore', windowsHide: true },
-                          )
-                        } catch {}
-                        this.currentAgentProcess = null
-                      }
-                      return
-                    }
-                    const displayText = b.text.replace(/\[ONHANDS_ASK:[\s\S]*?\]/, '').trim()
-                    if (displayText) this.streamChunk(`[text] ${displayText.slice(0, 120)}`)
-                  }
-                  if (b.type === 'tool_use') {
-                    const detail = JSON.stringify(b.input || {}).slice(0, 80)
-                    this.streamChunk(`[tool] ${b.name}(${detail})`)
-                  }
-                }
-              } else if (type === 'system') {
-                if (event.session_id) resumeSessionId = event.session_id
+              if (this.currentAgentProcess) {
+                try {
+                  require('child_process').execFileSync(
+                    'taskkill.exe', ['/pid', String(this.currentAgentProcess.pid), '/T', '/F'],
+                    { stdio: 'ignore', windowsHide: true },
+                  )
+                } catch {}
+                this.currentAgentProcess = null
               }
-            } catch {
-              this.streamChunk(line.slice(0, 120))
+              return
             }
+            const displayText = ev.text.replace(/\[ONHANDS_ASK:[\s\S]*?\]/, '').trim()
+            if (displayText) this.streamChunk(`[text] ${displayText.slice(0, 120)}`)
+          } else if (ev.type === 'tool_use') {
+            const detail = JSON.stringify(ev.input || {}).slice(0, 80)
+            this.streamChunk(`[tool] ${ev.name}(${detail})`)
+          } else if (ev.type === 'system') {
+            if (ev.sessionId) resumeSessionId = ev.sessionId
           }
         },
       })
