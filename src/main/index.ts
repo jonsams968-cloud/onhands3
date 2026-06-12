@@ -161,7 +161,15 @@ function detectAgents(): { name: string; path: string; installed: boolean }[] {
         resolvedPath = customPath
         found = true
       } else if (process.platform === 'win32') {
-        resolvedPath = execFileSync('where', [a.cmd], { encoding: 'utf-8' }).split('\n')[0].trim()
+        // Use 'buffer' encoding + fully pipe stdio to prevent GBK mojibake
+        // leaking to terminal on Chinese Windows when 'where' fails
+        const buf = execFileSync('where', [a.cmd], {
+          timeout: 3000,
+          encoding: 'buffer',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        }) as Buffer
+        resolvedPath = buf.toString('utf-8').split('\n')[0].trim()
         found = !!resolvedPath
       } else {
         resolvedPath = execFileSync('which', [a.cmd], { encoding: 'utf-8' }).trim()
