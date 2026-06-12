@@ -6,6 +6,8 @@ export interface LongPressEvent {
   x: number
   y: number
   timestamp: number
+  /** True if cursor was I-beam at mouse-down (text input area → dictation) */
+  isIBeam?: boolean
 }
 
 export interface LongPressEndEvent {

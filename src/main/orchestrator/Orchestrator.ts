@@ -5,7 +5,6 @@ import * as os from 'os'
 import * as path from 'path'
 import { MouseMonitor } from '../input/MouseMonitor'
 import { SelectionMonitor } from '../input/SelectionMonitor'
-import { detectCaret, type CaretContext } from '../input/CaretDetector'
 import { injectText } from '../input/ClipboardInjector'
 import { ContextCollector } from '../context/ContextCollector'
 import { RecentHistory } from '../history/RecentHistory'
@@ -78,7 +77,6 @@ export class Orchestrator {
   private pendingPosition = { x: 0, y: 0 }
   private pendingWindow: DesktopContext['activeWindow'] = null
   private pendingDictation = false
-  private pendingCaret: CaretContext | null = null
   private stt: any = null
   private currentAgentProcess: ChildProcess | null = null
   private misfireTimer: ReturnType<typeof setTimeout> | null = null
@@ -155,7 +153,7 @@ export class Orchestrator {
     }
 
     // Mouse events — capture window BEFORE showing overlay
-    this.mouse.on('longpress', async (e: { x: number; y: number }) => {
+    this.mouse.on('longpress', async (e: { x: number; y: number; isIBeam?: boolean }) => {
       if (this.isProcessing) return
       if (Date.now() - this.lastAbortTime < 200) return
       this.pendingPosition = { x: e.x, y: e.y }
@@ -163,11 +161,11 @@ export class Orchestrator {
       this.pendingWindow = null
       this.isRecording = true
 
-      // Detect caret BEFORE hiding overlay — this determines dictation vs command mode
-      this.pendingCaret = await detectCaret()
-      this.pendingDictation = this.pendingCaret.inInputField
+      // Cursor shape was captured at mouse-down time by MouseMonitor
+      // I-beam = user clicked in a text input area → dictation mode
+      this.pendingDictation = !!e.isIBeam
       if (this.pendingDictation) {
-        console.log(`[input] Caret detected → dictation mode`)
+        console.log(`[input] I-beam cursor → dictation mode`)
       }
 
       // Hide overlay first to capture the REAL foreground window
@@ -356,7 +354,6 @@ export class Orchestrator {
     } finally {
       this.isProcessing = false
       this.pendingDictation = false
-      this.pendingCaret = null
       this.clearProcessingTimeout()
     }
   }

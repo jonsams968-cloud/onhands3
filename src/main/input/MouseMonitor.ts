@@ -4,9 +4,15 @@ import type { LongPressEvent, LongPressEndEvent } from '../../shared/types'
 /**
  * Mouse long-press detector using GetAsyncKeyState polling.
  *
- * No hooks, no callbacks, no FFI registration — just two simple
- * Win32 function calls polled every 80ms via koffi.
+ * Also captures cursor shape at mouse-down time to determine if the
+ * user clicked in a text field (I-beam cursor = text input area).
  */
+
+export interface LongPressEventExt extends LongPressEvent {
+  /** True if the cursor was I-beam at mouse-down time (text input area) */
+  isIBeam: boolean
+}
+
 export class MouseMonitor extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
@@ -17,6 +23,9 @@ export class MouseMonitor extends EventEmitter {
   private readonly longPressMs: number
   private readonly dragThresholdPx: number
   private user32: any = null
+  private ibeamHandle: number = 0
+  /** Cursor shape captured at mouse-down time */
+  private mouseDownIsIBeam = false
 
   constructor(longPressMs = 800, dragThresholdPx = 15) {
     super()
@@ -27,6 +36,12 @@ export class MouseMonitor extends EventEmitter {
   async start(): Promise<void> {
     const koffi = await import('koffi')
     this.user32 = koffi.load('user32.dll')
+
+    // Pre-load I-beam cursor handle (IDC_IBEAM = 32513)
+    try {
+      const loadCursorW = this.user32.func('__stdcall', 'LoadCursorW', 'void *', ['void *', 'uint64'])
+      this.ibeamHandle = Number(loadCursorW(null, 32513n))
+    } catch {}
 
     const getAsyncKeyState = this.user32.func('__stdcall', 'GetAsyncKeyState', 'short', ['int'])
     const getCursorPos = this.user32.func('__stdcall', 'GetCursorPos', 'int', ['void *'])
@@ -60,14 +75,38 @@ export class MouseMonitor extends EventEmitter {
     if (this.user32) { try { this.user32.unload() } catch {} this.user32 = null }
   }
 
+  /** Check if current cursor is I-beam */
+  private checkIBeam(): boolean {
+    if (!this.ibeamHandle || !this.user32) return false
+    try {
+      const ci = Buffer.alloc(24)
+      ci.writeUInt32LE(24, 0)
+      const getCursorInfo = this.user32.func('__stdcall', 'GetCursorInfo', 'int', ['void *'])
+      if (!getCursorInfo(ci)) return false
+      const flags = ci.readUInt32LE(4)
+      if (!(flags & 0x0001)) return false  // CURSOR_SHOWING
+      const hCursor = Number(ci.readBigUInt64LE(8))
+      return hCursor === this.ibeamHandle
+    } catch { return false }
+  }
+
   private onMouseDown(x: number, y: number): void {
     this.mouseDownPos = { x, y }
     this.mouseDownTime = Date.now()
     this.isLongPress = false
 
+    // Capture cursor shape NOW — at mouse-down time
+    // This is the reliable moment: cursor hasn't changed yet
+    this.mouseDownIsIBeam = this.checkIBeam()
+
     this.timer = setTimeout(() => {
       this.isLongPress = true
-      this.emit('longpress', { x: this.mouseDownPos.x, y: this.mouseDownPos.y, timestamp: Date.now() } satisfies LongPressEvent)
+      this.emit('longpress', {
+        x: this.mouseDownPos.x,
+        y: this.mouseDownPos.y,
+        timestamp: Date.now(),
+        isIBeam: this.mouseDownIsIBeam,
+      } satisfies LongPressEventExt)
     }, this.longPressMs)
   }
 
