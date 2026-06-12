@@ -161,13 +161,6 @@ export class Orchestrator {
       this.pendingWindow = null
       this.isRecording = true
 
-      // Cursor shape was captured at mouse-down time by MouseMonitor
-      // I-beam = user clicked in a text input area → dictation mode
-      this.pendingDictation = !!e.isIBeam
-      if (this.pendingDictation) {
-        console.log(`[input] I-beam cursor → dictation mode`)
-      }
-
       // Hide overlay first to capture the REAL foreground window
       if (this.win.isVisible()) {
         this.win.hide()
@@ -187,7 +180,18 @@ export class Orchestrator {
         if (sel) {
           this.collector.setSelectedText(sel.text)
         }
-      } catch {}
+
+        // I-beam in text field + selected text → Agent mode (voice = instruction, selection = context)
+        // I-beam in text field + NO selected text → dictation mode (voice → text injection)
+        if (e.isIBeam) {
+          this.pendingDictation = !sel?.text
+          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}`)
+        } else {
+          this.pendingDictation = false
+        }
+      } catch {
+        this.pendingDictation = !!e.isIBeam
+      }
 
       this.sendState('recording')
     })

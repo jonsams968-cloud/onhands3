@@ -478,7 +478,7 @@ function AboutPanel() {
         <img src="/Logo_W.png" alt="OnHands3" className="about-logo" />
         <h2 className="about-title">OnHands3</h2>
         <p className="about-tagline">AI-driven smart cursor</p>
-        <span className="about-version">v0.48</span>
+        <span className="about-version">v0.49</span>
       </div>
       <div className="about-section">
         <h4 className="about-section-title">{txt.systemInfo}</h4>
@@ -604,7 +604,7 @@ export default function SettingsApp() {
         </div>
 
         <div className="settings-footer">
-          <span className="settings-footer-version">v0.48</span>
+          <span className="settings-footer-version">v0.49</span>
           <button className={`btn btn--primary ${saved ? 'btn--saved' : ''}`} onClick={handleSave} disabled={saving}>
             {saving ? '...' : saved ? txt.saved : txt.saveChanges}
           </button>
