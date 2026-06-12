@@ -3,6 +3,13 @@ import { useVoiceRecorder } from './hooks/useVoiceRecorder'
 import type { UIState, PermissionRequest, AskRequest } from '../shared/types'
 import './styles.css'
 
+interface ResultCard {
+  id: number
+  command: string
+  result: string
+  isError: boolean
+}
+
 declare global {
   interface Window {
     onhands: {
@@ -48,14 +55,17 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [queueItems, setQueueItems] = useState<{ id: number; command: string }[]>([])
   const [isQueueRecording, setIsQueueRecording] = useState(false)
+  const [resultCards, setResultCards] = useState<ResultCard[]>([])
 
   const inputRef = useRef<HTMLInputElement>(null)
   const streamRef = useRef<HTMLDivElement>(null)
+  const cardsRef = useRef<HTMLDivElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const stateRef = useRef<UIState>('hidden')
   const prevState = useRef<UIState>('hidden')
   const interactiveRef = useRef(false)  // Track last sent interactive state to avoid IPC spam
+  const commandTextRef = useRef('')
 
   useEffect(() => { stateRef.current = state }, [state])
 
@@ -138,6 +148,14 @@ export default function App() {
       }
 
       if (s === 'result' || s === 'error') {
+        // Push result card — persists across overlay show/hide cycles
+        setResultCards(prev => [...prev.slice(-19), {
+          id: Date.now(),
+          command: commandTextRef.current,
+          result: d || '',
+          isError: s === 'error',
+        }])
+        // Auto-hide after 60s (longer than old 12s to let users read cards)
         hideTimer.current = setTimeout(() => {
           setExiting(true)
           setTimeout(() => {
@@ -147,7 +165,7 @@ export default function App() {
             window.onhands.hideWindow()
             window.onhands.setInteractive(false)
           }, 200)
-        }, 12000)
+        }, 60000)
       }
     })
   }, [])
@@ -162,7 +180,10 @@ export default function App() {
 
   useEffect(() => {
     return window.onhands.onCommandText((text) => {
-      if (text) setCommandText(text)
+      if (text) {
+        setCommandText(text)
+        commandTextRef.current = text
+      }
     })
   }, [])
 
@@ -244,6 +265,10 @@ export default function App() {
   useEffect(() => {
     if (streamRef.current) streamRef.current.scrollTop = streamRef.current.scrollHeight
   }, [streamLines])
+
+  useEffect(() => {
+    if (cardsRef.current) cardsRef.current.scrollTop = cardsRef.current.scrollHeight
+  }, [resultCards])
 
   useEffect(() => {
     if (state === 'input') setTimeout(() => inputRef.current?.focus(), 50)
@@ -470,33 +495,27 @@ export default function App() {
           } catch { return null }
         })()}
 
-        {/* ── Result ── */}
-        {state === 'result' && (
-          <div>
-            {commandText && <div className="command-header command-header--done">{commandText}</div>}
-            <div className="row row--start row--gap-md">
-            <div className="status-icon status-icon--success">
-              <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                <path d="M1 4L3.5 6.5L9 1" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+        {/* ── Result Cards ── */}
+        {resultCards.length > 0 && (
+          <div className="result-cards-section">
+            <div className="result-cards-container" ref={cardsRef}>
+              {resultCards.map((card, idx) => (
+                <div key={card.id} className={[
+                  'result-card',
+                  card.isError && 'result-card--error',
+                  idx === resultCards.length - 1 && (state === 'result' || state === 'error') && 'result-card--latest',
+                ].filter(Boolean).join(' ')}>
+                  <div className="result-card__header">
+                    {card.command && <span className="result-card__command">🎤 {card.command.slice(0, 40)}{card.command.length > 40 ? '...' : ''}</span>}
+                    <button className="result-card__dismiss" onClick={() => setResultCards(prev => prev.filter(c => c.id !== card.id))} title="关闭">×</button>
+                  </div>
+                  <div className="result-card__body" dangerouslySetInnerHTML={{ __html: card.isError ? escapeHtml(card.result) : renderMarkdown(card.result) }} />
+                </div>
+              ))}
             </div>
-            <div className="result-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(message) }} />
-            </div>
-          </div>
-        )}
-
-        {/* ── Error ── */}
-        {state === 'error' && (
-          <div>
-            {commandText && <div className="command-header command-header--error">{commandText}</div>}
-            <div className="row row--start row--gap-md">
-            <div className="status-icon status-icon--error">
-              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                <path d="M1 1L7 7M7 1L1 7" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </div>
-            <p className="error-text">{message}</p>
-            </div>
+            {resultCards.length > 1 && (
+              <button className="clear-cards-btn" onClick={() => setResultCards([])}>清除全部</button>
+            )}
           </div>
         )}
 
@@ -591,6 +610,10 @@ function getStreamLineClass(line: string): string {
 
 function formatStreamLine(line: string): string {
   return line.replace(/^\[(tool|text|system)\]\s*/, '').replace(/^Tool:\s*/, '🔧 ').replace(/^Text:\s*/, '').slice(0, 120)
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function renderMarkdown(text: string): string {
