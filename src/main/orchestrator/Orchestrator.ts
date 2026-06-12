@@ -372,13 +372,16 @@ export class Orchestrator {
         this.sendState('error', err instanceof Error ? err.message : 'Execution failed')
       }
     } finally {
-      this.isProcessing = false
       this.clearProcessingTimeout()
-      // Show result briefly before starting next queue task
-      if (this.taskQueue.length > 0 && !this.aborted) {
-        await new Promise(r => setTimeout(r, 3000))
+      const hasAsk = !!this.askSessionId
+      if (!hasAsk) {
+        if (this.taskQueue.length > 0 && !this.aborted) {
+          // Brief visual pause — isProcessing stays true to prevent race
+          await new Promise(r => setTimeout(r, 1000))
+        }
+        this.isProcessing = false
+        this.processQueue()
       }
-      this.processQueue()
     }
   }
 
@@ -495,14 +498,18 @@ export class Orchestrator {
         this.sendState('error', err instanceof Error ? err.message : 'Voice processing failed')
       }
     } finally {
-      this.isProcessing = false
       this.pendingDictation = false
       this.clearProcessingTimeout()
-      // Show result briefly before starting next queue task
-      if (this.taskQueue.length > 0 && !this.aborted) {
-        await new Promise(r => setTimeout(r, 3000))
+      const hasAsk = !!this.askSessionId
+      if (!hasAsk) {
+        if (this.taskQueue.length > 0 && !this.aborted) {
+          // Brief visual pause — isProcessing stays true to prevent race
+          await new Promise(r => setTimeout(r, 1000))
+        }
+        this.isProcessing = false
+        this.processQueue()
       }
-      this.processQueue()
+      // ASK pending → isProcessing stays true, handleAskAnswer will clean up
     }
   }
 
@@ -1318,13 +1325,16 @@ export class Orchestrator {
         this.sendState('error', err instanceof Error ? err.message : 'Execution failed')
       }
     } finally {
-      this.isProcessing = false
       this.clearProcessingTimeout()
-      // Show result briefly before starting next queue task
-      if (this.taskQueue.length > 0 && !this.aborted) {
-        await new Promise(r => setTimeout(r, 3000))
+      const hasAsk = !!this.askSessionId
+      if (!hasAsk) {
+        if (this.taskQueue.length > 0 && !this.aborted) {
+          // Brief visual pause — isProcessing stays true to prevent race
+          await new Promise(r => setTimeout(r, 1000))
+        }
+        this.isProcessing = false
+        this.processQueue()
       }
-      this.processQueue()
     }
   }
 

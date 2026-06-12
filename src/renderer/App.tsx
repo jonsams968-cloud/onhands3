@@ -164,8 +164,8 @@ export default function App() {
           }])
         }
         // Auto-hide: 60s for card results (user needs time to read),
-        // 5s for transient results (dictation confirmations, silence, mic errors)
-        const hideDelay = hasCards ? 60000 : 5000
+        // 2s for transient results (dictation confirmations, silence, mic errors)
+        const hideDelay = hasCards ? 60000 : 2000
         hideTimer.current = setTimeout(() => {
           setExiting(true)
           setTimeout(() => {
@@ -175,7 +175,7 @@ export default function App() {
             window.onhands.hideWindow()
             window.onhands.setInteractive(false)
           }, 200)
-        }, 60000)
+        }, hideDelay)
       }
     })
   }, [])
