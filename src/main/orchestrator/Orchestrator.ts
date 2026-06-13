@@ -397,6 +397,23 @@ export class Orchestrator {
       const r = transitionSelection(this.selectionState, { kind: 'maction', action: e.type })
       this.selectionState = r.state
       if (r.shouldClear) this.selectionMonitor.clearSelection()
+
+      // After a selection-intent gesture (drag/dblclick/trplclick), actively
+      // request the current selection from the worker. Passive events may
+      // have arrived DURING the drag (before this maction fired) and been
+      // discarded by the state machine because state was still 'none'.
+      // The snapshot is authoritative and bypasses that timing race.
+      if (e.type !== 'click') {
+        this.selectionMonitor.requestSnapshot().then((sel) => {
+          if (!sel) return
+          const sr = transitionSelection(this.selectionState, { kind: 'snapshot' })
+          this.selectionState = sr.state
+          if (sr.shouldStore) {
+            this.selectionMonitor.storeSelection(sel)
+            console.log(`[selection] Snapshot stored: ${sel.text.length} chars from ${sel.programName}`)
+          }
+        }).catch(() => { /* snapshot is best-effort */ })
+      }
     })
 
     // ─── Selection events → gated storage based on state ───

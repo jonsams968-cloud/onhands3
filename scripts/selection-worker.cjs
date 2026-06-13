@@ -63,6 +63,31 @@ async function main() {
             if (hook) { try { hook.cleanup() } catch {} }
             process.exit(0)
           }
+          // Active snapshot: query current selection on demand.
+          // Used when the mouse-action classifier detects a selection-intent
+          // gesture (drag/dblclick/trplclick) — passive events may have
+          // arrived BEFORE the maction (during the drag itself), getting
+          // discarded by the state machine. This snapshot lets us fetch the
+          // authoritative current selection at the moment we know the user
+          // intended to select.
+          if (msg.cmd === 'snapshot') {
+            try {
+              const sel = hook.getCurrentSelection()
+              if (sel && sel.text && sel.text.trim()) {
+                send({
+                  type: 'selection',
+                  text: sel.text,
+                  programName: sel.programName || '',
+                  method: sel.method,
+                  snapshot: true,  // mark as authoritative
+                })
+              } else {
+                send({ type: 'snapshot-empty' })
+              }
+            } catch (err) {
+              send({ type: 'error', message: 'snapshot failed: ' + (err.message || String(err)) })
+            }
+          }
         } catch {}
       }
     })

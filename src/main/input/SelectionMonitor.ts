@@ -125,13 +125,25 @@ export class SelectionMonitor extends EventEmitter {
           programName: msg.programName || '',
           timestamp: Date.now(),
         }
-        // Emit — Orchestrator's state machine decides whether to store
+        // Emit — Orchestrator's state machine decides whether to store.
+        // For 'snapshot' results (msg.snapshot === true), also emit a
+        // separate 'snapshot' event so the Orchestrator can store it
+        // directly, bypassing the state machine (which would discard it
+        // since snapshot is requested AFTER maction, when state is already
+        // 'pending' but the passive-event timing window has passed).
         this.emit('selection', selection)
+        if (msg.snapshot) {
+          this.emit('snapshot', selection)
+        }
         console.log(
           `[selection] ${msg.text.length} chars from ${msg.programName || '?'} ` +
-          `(${METHOD_NAMES[msg.method] || msg.method})`
+          `(${METHOD_NAMES[msg.method] || msg.method})${msg.snapshot ? ' [snapshot]' : ''}`
         )
       }
+    } else if (msg.type === 'snapshot-empty') {
+      // Worker confirmed: no current selection. Emit so any pending
+      // requestSnapshot() promise can resolve with null.
+      this.emit('snapshot-empty')
     } else if (msg.type === 'error') {
       console.error(`[selection] Worker error: ${msg.message}`)
     }
@@ -143,6 +155,48 @@ export class SelectionMonitor extends EventEmitter {
    */
   storeSelection(sel: CapturedSelection): void {
     this.latestSelection = sel
+  }
+
+  /**
+   * Request an authoritative snapshot of the current selection from the worker.
+   * Returns a Promise that resolves with the selection (or null if none).
+   *
+   * This is the fix for the timing race where passive 'text-selection' events
+   * arrive DURING a drag (before the maction is classified), getting discarded
+   * by the state machine. By the time maction fires, the selection is stable
+   * and we can query it directly.
+   */
+  requestSnapshot(timeoutMs = 500): Promise<CapturedSelection | null> {
+    return new Promise((resolve) => {
+      if (!this.worker || !this.running) {
+        resolve(null)
+        return
+      }
+
+      let settled = false
+      const finish = (result: CapturedSelection | null) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.off('snapshot', onSnapshot)
+        this.off('snapshot-empty', onEmpty)
+        resolve(result)
+      }
+
+      const onSnapshot = (sel: CapturedSelection) => finish(sel)
+      const onEmpty = () => finish(null)
+
+      this.once('snapshot', onSnapshot)
+      this.once('snapshot-empty', onEmpty)
+
+      const timer = setTimeout(() => finish(null), timeoutMs)
+
+      try {
+        this.worker.stdin!.write(JSON.stringify({ cmd: 'snapshot' }) + '\n')
+      } catch {
+        finish(null)
+      }
+    })
   }
 
   /**

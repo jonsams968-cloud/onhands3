@@ -25,6 +25,7 @@ export type SelectionInput =
   | { kind: 'selection' }
   | { kind: 'longpress' }     // long-press consumed the gesture — reset
   | { kind: 'consume' }       // selection was consumed by long-press trigger
+  | { kind: 'snapshot' }      // authoritative snapshot arrived (post-maction)
 
 export interface SelectionTransition {
   state: SelectionState
@@ -90,6 +91,20 @@ export function transitionSelection(
         return { state: 'none', shouldStore: false, shouldClear: false }
       }
       return { state: 'none', shouldStore: false, shouldClear: true }
+    }
+
+    case 'snapshot': {
+      // Authoritative selection arrived after maction (drag/dblclick/trplclick).
+      // In 'pending' state, store and promote to 'active'.
+      // In 'active' state, refresh.
+      // In 'none' or 'cancelled', a snapshot shouldn't normally arrive
+      // (we only request it after a selection-intent maction), but be
+      // defensive and store anyway — snapshots are authoritative.
+      if (prev === 'pending' || prev === 'active' || prev === 'none') {
+        return { state: 'active', shouldStore: true, shouldClear: false }
+      }
+      // 'cancelled' — respect the cancellation, discard
+      return { state: prev, shouldStore: false, shouldClear: false }
     }
   }
 }

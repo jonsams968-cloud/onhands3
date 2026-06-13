@@ -8,6 +8,7 @@ import {
 const maction = (action: 'click' | 'drag' | 'dblclick' | 'trplclick'): SelectionInput =>
   ({ kind: 'maction', action })
 const SELECTION: SelectionInput = { kind: 'selection' }
+const SNAPSHOT: SelectionInput = { kind: 'snapshot' }
 const LONGPRESS: SelectionInput = { kind: 'longpress' }
 const CONSUME: SelectionInput = { kind: 'consume' }
 
@@ -110,6 +111,62 @@ describe('transitionSelection', () => {
 
     it('consume in "active" → "none" + shouldClear', () => {
       const r = transitionSelection('active', CONSUME)
+      expect(r.state).toBe('none')
+      expect(r.shouldClear).toBe(true)
+    })
+  })
+
+  describe('snapshot (authoritative post-maction query)', () => {
+    it('snapshot in "pending" → "active" + shouldStore (the bug fix)', () => {
+      // This is the core scenario: user dragged, passive events were discarded
+      // during the drag, maction fired and set state='pending'. Now snapshot
+      // returns the actual selection — trust it.
+      const r = transitionSelection('pending', SNAPSHOT)
+      expect(r.state).toBe('active')
+      expect(r.shouldStore).toBe(true)
+    })
+
+    it('snapshot in "active" → "active" + shouldStore (refresh)', () => {
+      const r = transitionSelection('active', SNAPSHOT)
+      expect(r.state).toBe('active')
+      expect(r.shouldStore).toBe(true)
+    })
+
+    it('snapshot in "none" → "active" + shouldStore (defensive)', () => {
+      // Snapshots are only requested after selection-intent maction, so seeing
+      // one in 'none' is unusual but not impossible (race). Trust it.
+      const r = transitionSelection('none', SNAPSHOT)
+      expect(r.state).toBe('active')
+      expect(r.shouldStore).toBe(true)
+    })
+
+    it('snapshot in "cancelled" → discarded (respect cancellation)', () => {
+      // If user clicked (cancelling selection), don't let a late snapshot
+      // resurrect a stale selection.
+      const r = transitionSelection('cancelled', SNAPSHOT)
+      expect(r.state).toBe('cancelled')
+      expect(r.shouldStore).toBe(false)
+    })
+  })
+
+  describe('full drag-select workflow with snapshot', () => {
+    it('drag → snapshot stores the selection that passive events missed', () => {
+      // 1. User starts dragging — passive events fire during drag but
+      //    state='none' so they're discarded
+      // 2. Mouse up → maction drag fires
+      let state = INITIAL_SELECTION_STATE
+      let r = transitionSelection(state, maction('drag'))
+      state = r.state
+      expect(state).toBe('pending')
+
+      // 3. Snapshot requested, returns the actual selection
+      r = transitionSelection(state, SNAPSHOT)
+      state = r.state
+      expect(state).toBe('active')
+      expect(r.shouldStore).toBe(true)
+
+      // 4. Long-press fires — consume and reset
+      r = transitionSelection(state, LONGPRESS)
       expect(r.state).toBe('none')
       expect(r.shouldClear).toBe(true)
     })
