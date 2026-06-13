@@ -17,6 +17,7 @@ import { AgentDetector } from '../agents/AgentDetector'
 import { ClaudeCodeAgent } from '../agents/ClaudeCodeAgent'
 import type { Agent, AgentEvent } from '../agents/types'
 import { loadConfig } from '../config'
+import { ensureInitialized, appendRule, formatRulesForPrompt } from '../oh3/Oh3Store'
 import { PermissionServer } from '../permission/PermissionServer'
 import type { DesktopContext, ExecutionResult, UIState } from '../../shared/types'
 import type { AskRequest } from '../../shared/types'
@@ -744,6 +745,29 @@ export class Orchestrator {
     this.sendState('processing')
     this.streamChunk(`[system] 通过 ${mode === 'agent' ? 'Agent CLI' : 'AI'} 执行...`)
 
+    // ─── .oh3/ memory judgment (agent mode only, before agent runs) ───
+    // Sequential: DirectAI checks if user stated a rule/preference/fact,
+    // writes it to .oh3/ if yes, THEN agent runs (and picks up the new rule
+    // via formatRulesForPrompt in buildAgentPrompt).
+    if (mode === 'agent' && this.agent && context.workingDirectory) {
+      try {
+        ensureInitialized(context.workingDirectory)
+        const judgment = await this.directAI.judgeMemory(command)
+        if (judgment) {
+          const id = appendRule(context.workingDirectory, judgment.type, judgment.content, 'directai')
+          if (id) {
+            console.log(`[oh3] Wrote memory ${id} (${judgment.type}): ${judgment.content}`)
+            this.streamChunk(`[system] 记下了一条${judgment.type === 'rule' ? '规则' : judgment.type === 'preference' ? '偏好' : '事实'}：${judgment.content}`)
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[oh3] Memory judgment failed: ${err.message || err}`)
+        // Non-fatal — agent execution continues
+      }
+    }
+
+    if (this.aborted) return
+
     let result: ExecutionResult
     console.log(`[pipeline] Executing via ${mode === 'agent' && this.agent ? 'agent CLI' : 'direct AI'}...`)
 
@@ -1321,6 +1345,16 @@ export class Orchestrator {
     if (historySection) {
       parts.push(historySection)
       parts.push(``)
+    }
+
+    // Inject project memory from .oh3/ (rules / preferences / facts)
+    if (context.workingDirectory) {
+      const memorySection = formatRulesForPrompt(context.workingDirectory)
+      if (memorySection) {
+        parts.push(`## 项目记忆（来自 .oh3/，必须遵守）`)
+        parts.push(memorySection)
+        parts.push(``)
+      }
     }
 
     parts.push(`## User Command`)
