@@ -263,6 +263,9 @@ Execute → stream output → show result / auto-hide after 12s
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.5.1 | 2026-06-13 | Hotfix: selection-worker packaging, settings logo path, dynamic version display |
+| v0.5.0 | 2026-06-13 | Selection intent state machine, batch SendInput (IME-safe), task queue, result cards |
+| v0.49.x | 2026-06-10..12 | Dictation cleanup, ASK timeout fix, result cards UI, consecutive punctuation fix |
 | v0.48 | 2026-06-09 | Tencent Cloud streaming ASR, Phase 1 stability (history, parallel capture, crash recovery), permission dialog fix |
 | v0.47 | 2026-06-08 | selection-hook replaces Ctrl+C for text selection capture |
 | v0.46 | 2026-06-07 | ASK protocol — agent can present choices to user |

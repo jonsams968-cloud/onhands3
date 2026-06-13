@@ -25,6 +25,7 @@
 
 import { EventEmitter } from 'events'
 import { spawn, type ChildProcess } from 'child_process'
+import * as fs from 'fs'
 import * as path from 'path'
 
 export interface CapturedSelection {
@@ -45,11 +46,15 @@ export class SelectionMonitor extends EventEmitter {
   async start(): Promise<void> {
     if (this.running) return
 
-    const workerPath = path.join(process.cwd(), 'scripts', 'selection-worker.cjs')
+    const workerPath = this.getWorkerPath()
 
     try {
-      this.worker = spawn('node', [workerPath], {
+      // Use the Electron binary (process.execPath) as the Node runtime.
+      // In production, system 'node' is not available — the app bundles only Electron.
+      // ELECTRON_RUN_AS_NODE=1 makes the Electron binary behave as pure Node.js.
+      this.worker = spawn(process.execPath, [workerPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         windowsHide: true,
       })
 
@@ -90,6 +95,19 @@ export class SelectionMonitor extends EventEmitter {
     } catch (err) {
       console.warn(`[selection] Failed to spawn worker: ${err instanceof Error ? err.message : err}`)
     }
+  }
+
+  /**
+   * Resolve the selection-worker.cjs path.
+   * - Production: packaged into resources/scripts/ via electron-builder extraResources
+   * - Dev: scripts/ relative to project root (process.cwd())
+   */
+  private getWorkerPath(): string {
+    const prodPath = path.join(process.resourcesPath || '', 'scripts', 'selection-worker.cjs')
+    if (process.resourcesPath && fs.existsSync(prodPath)) {
+      return prodPath
+    }
+    return path.join(process.cwd(), 'scripts', 'selection-worker.cjs')
   }
 
   private handleWorkerMessage(msg: any): void {

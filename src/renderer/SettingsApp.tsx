@@ -36,6 +36,7 @@ const api = (window as any).onhands as {
   settingsSave: (data: Partial<Config>) => Promise<Config>
   settingsDetectAgents: () => Promise<AgentInfo[]>
   settingsCloseWindow: () => Promise<void>
+  getVersion?: () => Promise<string>
 } | undefined
 
 // ─── i18n ───
@@ -475,10 +476,10 @@ function AboutPanel() {
   return (
     <div className="tab-panel">
       <div className="about-hero">
-        <img src="/Logo_W.png" alt="OnHands3" className="about-logo" />
+        <img src="./Logo_W.png" alt="OnHands3" className="about-logo" />
         <h2 className="about-title">OnHands3</h2>
         <p className="about-tagline">AI-driven smart cursor</p>
-        <span className="about-version">v0.49.1</span>
+        <span className="about-version">v{version}</span>
       </div>
       <div className="about-section">
         <h4 className="about-section-title">{txt.systemInfo}</h4>
@@ -511,6 +512,7 @@ export default function SettingsApp() {
   const [lang, setLang] = useState<Lang>('zh')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [version, setVersion] = useState('...')
 
   // Load config on mount
   useEffect(() => {
@@ -520,6 +522,7 @@ export default function SettingsApp() {
         setLang(c.language || 'zh')
       })
       api.settingsDetectAgents().then(setAgents)
+      api.getVersion?.().then(setVersion)
     } else {
       // Fallback for standalone preview
       setRawCfg({
@@ -604,7 +607,7 @@ export default function SettingsApp() {
         </div>
 
         <div className="settings-footer">
-          <span className="settings-footer-version">v0.49.1</span>
+          <span className="settings-footer-version">v{version}</span>
           <button className={`btn btn--primary ${saved ? 'btn--saved' : ''}`} onClick={handleSave} disabled={saving}>
             {saving ? '...' : saved ? txt.saved : txt.saveChanges}
           </button>

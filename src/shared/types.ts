@@ -146,4 +146,5 @@ export interface RendererAPI {
   openInFolder: (filePath: string) => Promise<void>
   regenerateMedia: () => Promise<void>
   saveMedia: (sourcePath: string, targetDir: string) => Promise<string | null>
+  getVersion: () => Promise<string>
 }

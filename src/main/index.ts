@@ -304,6 +304,11 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: app version (reads from package.json — stays in sync automatically)
+  ipcMain.handle('app:version', () => {
+    return app.getVersion()
+  })
+
   // Keyboard shortcuts for testing
   globalShortcut.register('CommandOrControl+Shift+1', () => {
     mainWindow?.webContents.send('state-changed', 'recording')

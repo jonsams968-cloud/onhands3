@@ -57,4 +57,7 @@ contextBridge.exposeInMainWorld('onhands', {
   settingsSave: (data: Record<string, any>) => ipcRenderer.invoke('settings:save', data),
   settingsDetectAgents: () => ipcRenderer.invoke('settings:detectAgents'),
   settingsCloseWindow: () => ipcRenderer.invoke('settings:closeWindow'),
+
+  // App version (reads from package.json via app.getVersion())
+  getVersion: () => ipcRenderer.invoke('app:version'),
 })
