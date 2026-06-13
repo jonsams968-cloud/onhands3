@@ -14,8 +14,16 @@
  *   scripts/selection-worker.cjs (standalone Node.js process)
  *     ↕ WH_MOUSE_LL hook + UIA/IAccessible
  *   OS text selection events
+ *
+ * EVENT-BASED GATING:
+ * The worker fires selection events for EVERY mouse action it interprets as
+ * a selection — including false positives from single clicks (cursor
+ * positioning). To filter these, SelectionMonitor emits a 'selection' event
+ * rather than storing directly. The Orchestrator's state machine decides
+ * whether to call storeSelection() based on mouse-action state.
  */
 
+import { EventEmitter } from 'events'
 import { spawn, type ChildProcess } from 'child_process'
 import * as path from 'path'
 
@@ -29,7 +37,7 @@ const METHOD_NAMES: Record<number, string> = {
   1: 'UIA', 3: 'IAccessible', 11: 'AXAPI', 22: 'PRIMARY', 99: 'Clipboard'
 }
 
-export class SelectionMonitor {
+export class SelectionMonitor extends EventEmitter {
   private worker: ChildProcess | null = null
   private latestSelection: CapturedSelection | null = null
   private running = false
@@ -94,11 +102,13 @@ export class SelectionMonitor {
       }
     } else if (msg.type === 'selection') {
       if (msg.text && msg.text.trim()) {
-        this.latestSelection = {
+        const selection: CapturedSelection = {
           text: msg.text,
           programName: msg.programName || '',
           timestamp: Date.now(),
         }
+        // Emit — Orchestrator's state machine decides whether to store
+        this.emit('selection', selection)
         console.log(
           `[selection] ${msg.text.length} chars from ${msg.programName || '?'} ` +
           `(${METHOD_NAMES[msg.method] || msg.method})`
@@ -107,6 +117,14 @@ export class SelectionMonitor {
     } else if (msg.type === 'error') {
       console.error(`[selection] Worker error: ${msg.message}`)
     }
+  }
+
+  /**
+   * Store a selection manually. Called by the Orchestrator state machine
+   * when a mouse-action pattern indicates a genuine selection (drag/dblclick/trplclick).
+   */
+  storeSelection(sel: CapturedSelection): void {
+    this.latestSelection = sel
   }
 
   /**

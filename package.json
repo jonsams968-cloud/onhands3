@@ -1,6 +1,6 @@
 {
   "name": "onhands3",
-  "version": "0.49.5",
+  "version": "0.5.0",
   "description": "AI-driven smart cursor — voice/text commands via mouse long-press, executed by AI agents",
   "main": "out/main/index.js",
   "scripts": {
