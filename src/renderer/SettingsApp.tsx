@@ -156,6 +156,15 @@ const t = {
     links: '链接',
     docs: '文档',
     feedback: '反馈',
+    updateCheck: '更新检查',
+    newVersionAvailable: '新版可用',
+    currentVersionLabel: '当前版本',
+    downloadNew: '下载新版',
+    upToDate: '已是最新版本',
+    notCheckedYet: '尚未检查更新',
+    checkNow: '检查更新',
+    recheck: '重新检查',
+    checking: '检查中...',
     saveChanges: '保存更改',
     saved: '已保存',
   },
@@ -247,6 +256,15 @@ const t = {
     links: 'Links',
     docs: 'Docs',
     feedback: 'Feedback',
+    updateCheck: 'Updates',
+    newVersionAvailable: 'New version available',
+    currentVersionLabel: 'current',
+    downloadNew: 'Download',
+    upToDate: 'Up to date',
+    notCheckedYet: 'Not checked yet',
+    checkNow: 'Check now',
+    recheck: 'Recheck',
+    checking: 'Checking...',
     saveChanges: 'Save Changes',
     saved: 'Saved',
   },
@@ -854,30 +872,30 @@ function AboutPanel({ version }: { version: string }) {
         </div>
       </div>
       <div className="about-section">
-        <h4 className="about-section-title">更新检查 / Updates</h4>
+        <h4 className="about-section-title">{txt.updateCheck}</h4>
         <div className="about-update-row">
           {updateStatus?.hasUpdate ? (
             <>
               <span className="about-update-text">
-                ✨ 新版可用: <strong>v{updateStatus.latestVersion}</strong>
-                <span className="about-update-sub">（当前 v{updateStatus.currentVersion}）</span>
+                ✨ {txt.newVersionAvailable}: <strong>v{updateStatus.latestVersion}</strong>
+                <span className="about-update-sub">（{txt.currentVersionLabel} v{updateStatus.currentVersion}）</span>
               </span>
               <a className="about-link" href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">
-                下载新版 →
+                {txt.downloadNew} →
               </a>
             </>
           ) : updateStatus ? (
             <>
-              <span className="about-update-text">✓ 已是最新版本 v{updateStatus.currentVersion}</span>
+              <span className="about-update-text">✓ {txt.upToDate} v{updateStatus.currentVersion}</span>
               <button className="about-check-btn" onClick={handleCheck} disabled={checking}>
-                {checking ? '检查中...' : '重新检查'}
+                {checking ? txt.checking : txt.recheck}
               </button>
             </>
           ) : (
             <>
-              <span className="about-update-text about-update-unknown">尚未检查更新</span>
+              <span className="about-update-text about-update-unknown">{txt.notCheckedYet}</span>
               <button className="about-check-btn" onClick={handleCheck} disabled={checking}>
-                {checking ? '检查中...' : '检查更新'}
+                {checking ? txt.checking : txt.checkNow}
               </button>
             </>
           )}

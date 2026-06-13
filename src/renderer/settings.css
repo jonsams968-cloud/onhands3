@@ -34,6 +34,16 @@
 
 /* ─── Window Layout ─── */
 
+/* Buttons, inputs, and links don't inherit font-family by default in browsers.
+   Force inheritance so all UI uses the same font as .settings-window. */
+.settings-window button,
+.settings-window input,
+.settings-window a,
+.settings-window select,
+.settings-window textarea {
+  font-family: var(--font);
+}
+
 .settings-window {
   display: flex;
   flex-direction: column;
