@@ -106,7 +106,7 @@ export class DirectAI {
 1. 去除语气词和口癖：嗯、额、那个、就是、然后、emm、like、you know
 2. 处理自我修正："15号...不对16号" → "16号"，"下周...不这周" → "这周"
 3. 去除重复词："我我我觉得" → "我觉得"
-4. 添加标点符号（逗号、句号、问号）
+4. 补充缺失的标点符号（逗号、句号、问号），但保留原文已有标点，绝不要产生连续重复标点（如 ，，或 。。）
 5. 保持口语自然感，不要过度书面化
 6. 只输出清洗后的文字，不要任何额外内容`,
         },
@@ -133,14 +133,17 @@ export class DirectAI {
       }
 
       const result = await response.json() as { choices: Array<{ message: { content: string } }> }
-      const text = result.choices?.[0]?.message?.content?.trim() || rawText
+      let text = result.choices?.[0]?.message?.content?.trim() || rawText
+      // Safety net: remove consecutive duplicate punctuation (AI or ASR artifact)
+      text = text.replace(/([，。！？、；：])\1+/g, '$1')
       console.log(`[dictation] API response: "${text.slice(0, 100)}"`)
 
       return { success: true, output: text, durationMs: Date.now() - startTime }
     } catch (err: any) {
       console.warn(`[dictation] Cleanup failed: ${err.message || err}`)
-      // Fallback: return raw text if AI cleanup fails
-      return { success: true, output: rawText, durationMs: Date.now() - startTime }
+      // Fallback: return raw text if AI cleanup fails (still clean duplicate punctuation)
+      const cleaned = rawText.replace(/([，。！？、；：])\1+/g, '$1')
+      return { success: true, output: cleaned, durationMs: Date.now() - startTime }
     }
   }
 }
