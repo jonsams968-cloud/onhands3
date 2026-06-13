@@ -5,7 +5,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { MouseMonitor } from '../input/MouseMonitor'
 import { SelectionMonitor } from '../input/SelectionMonitor'
-import { injectText } from '../input/ClipboardInjector'
+import { injectText, injectTextViaClipboard } from '../input/ClipboardInjector'
 import { ContextCollector } from '../context/ContextCollector'
 import { RecentHistory } from '../history/RecentHistory'
 import { Router } from '../ai/Router'
@@ -552,6 +552,9 @@ export class Orchestrator {
         } else {
           this.streamChunk(`[system] 📝 听写完成 (请手动粘贴)`)
         }
+        // Clear selection to prevent injected text from being picked up as "selected text"
+        // by the selection-hook, which would route the next voice input to agent mode.
+        this.selectionMonitor.clearSelection()
         this.history.add({
           timestamp: Date.now(),
           command: `[dictation] ${rawText}`,
@@ -569,7 +572,15 @@ export class Orchestrator {
       this.win.setIgnoreMouseEvents(true, { forward: true })
       await new Promise(r => setTimeout(r, 100))  // Wait for target app to regain foreground
 
-      const injected = await injectText(cleanText)
+      // Use clipboard injection (Ctrl+V) instead of SendInput KEYEVENTF_UNICODE.
+      // SendInput can produce garbled text in apps with active Chinese IME (e.g. WeChat)
+      // because the IME may intercept KEYEVENTF_UNICODE events and corrupt the output.
+      // Clipboard paste bypasses the IME entirely and is universally reliable.
+      const injected = await injectTextViaClipboard(cleanText)
+
+      // Clear selection to prevent injected text from being picked up as "selected text"
+      // by the selection-hook, which would route the next voice input to agent mode.
+      this.selectionMonitor.clearSelection()
 
       if (this.aborted) return
 
