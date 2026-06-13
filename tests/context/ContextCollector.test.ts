@@ -61,7 +61,7 @@ describe('ContextCollector', () => {
       // No window captured via captureActiveWindow
       collector.setCapturedWindow(null)
 
-      const context = await collector.collect(0, 0)
+      const context = await collector.collect()
       expect(context.activeWindow).toBeNull()
       expect(context.workingDirectory).toBe(process.cwd())
     })
@@ -78,7 +78,7 @@ describe('ContextCollector', () => {
       }
       collector.setCapturedWindow(explorerWindow)
 
-      const context = await collector.collect(0, 0)
+      const context = await collector.collect()
       expect(context.activeWindow).toEqual(explorerWindow)
       // Without captureActiveWindow, capturedWorkingDir is null → falls back to cwd
       expect(context.workingDirectory).toBe(process.cwd())

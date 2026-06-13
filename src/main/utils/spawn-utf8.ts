@@ -116,8 +116,10 @@ export function execFileUtf8(
     }
 
     execFile(command, args, opts, (err, stdout, stderr) => {
-      if (err) reject(new Error(stderr || err.message))
-      else resolve({ stdout: stdout.trim(), stderr: stderr.trim() })
+      const outText = typeof stdout === 'string' ? stdout : ''
+      const errText = typeof stderr === 'string' ? stderr : ''
+      if (err) reject(new Error(errText || err.message))
+      else resolve({ stdout: outText.trim(), stderr: errText.trim() })
     })
   })
 }

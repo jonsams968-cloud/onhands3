@@ -286,4 +286,60 @@ export class TencentASR {
       })
     })
   }
+
+  /**
+   * Test Tencent ASR connection by verifying the WebSocket handshake.
+   * Returns success if the server accepts the credentials (code=0).
+   * Does NOT send any audio — just checks authentication.
+   */
+  testConnection(): Promise<{ success: boolean; message: string }> {
+    return new Promise((resolve) => {
+      if (!this.secretId || !this.secretKey || !this.appId) {
+        resolve({ success: false, message: '配置不完整：需要 Secret ID、Secret Key 和 App ID' })
+        return
+      }
+
+      const voiceId = randomUUID()
+      const url = this.buildWsUrl(voiceId)
+      let settled = false
+
+      const finish = (result: { success: boolean; message: string }) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        try { ws.close() } catch {}
+        resolve(result)
+      }
+
+      const ws = new WebSocket(url)
+      const timeout = setTimeout(() => {
+        finish({ success: false, message: '连接超时（10秒）' })
+      }, 10_000)
+
+      ws.addEventListener('open', () => {
+        console.log('[tencent-asr:test] WebSocket connected, waiting for handshake...')
+      })
+
+      ws.addEventListener('message', (event: MessageEvent) => {
+        try {
+          const data: ASRResult = JSON.parse(event.data as string)
+          if (data.code === 0) {
+            finish({ success: true, message: '认证成功，连接正常' })
+          } else {
+            finish({ success: false, message: `认证失败 (code=${data.code}): ${data.message}` })
+          }
+        } catch {
+          finish({ success: false, message: '无法解析服务器响应' })
+        }
+      })
+
+      ws.addEventListener('error', () => {
+        finish({ success: false, message: 'WebSocket 连接失败（检查网络或凭据）' })
+      })
+
+      ws.addEventListener('close', () => {
+        finish({ success: false, message: '连接被关闭（凭据可能无效）' })
+      })
+    })
+  }
 }

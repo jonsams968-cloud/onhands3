@@ -263,6 +263,7 @@ Execute → stream output → show result / auto-hide after 12s
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.5.2 | 2026-06-13 | P1: 55+ unit tests (mouse classifier, state machine, UpdateChecker), Tencent test connection, auto-update check, About page links |
 | v0.5.1 | 2026-06-13 | Hotfix: selection-worker packaging, settings logo path, dynamic version display |
 | v0.5.0 | 2026-06-13 | Selection intent state machine, batch SendInput (IME-safe), task queue, result cards |
 | v0.49.x | 2026-06-10..12 | Dictation cleanup, ASK timeout fix, result cards UI, consecutive punctuation fix |

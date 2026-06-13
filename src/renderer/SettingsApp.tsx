@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { createRoot } from 'react-dom/client'
+import type { UpdateStatus } from '../shared/types'
 import './settings.css'
 
 // ─── Types ───
@@ -37,6 +38,10 @@ const api = (window as any).onhands as {
   settingsDetectAgents: () => Promise<AgentInfo[]>
   settingsCloseWindow: () => Promise<void>
   getVersion?: () => Promise<string>
+  checkForUpdates?: () => Promise<UpdateStatus | null>
+  getUpdateStatus?: () => Promise<UpdateStatus | null>
+  testTencentConnection?: (creds: { secretId: string; secretKey: string; appId: string }) =>
+    Promise<{ success: boolean; message: string }>
 } | undefined
 
 // ─── i18n ───
@@ -85,6 +90,7 @@ const t = {
     cloudConfig: 'OpenAI Whisper API',
     cloudConfigDesc: '使用 OpenAI 兼容的 Whisper API 端点',
     apiKeyIndependent: '与上方 AI 配置的 API Key 独立',
+    cloudUsesAiKey: '云端 Whisper 使用上方 AI 配置的 API Key 和 Base URL。如需使用独立的 OpenAI Key，请设置环境变量 OPENAI_API_KEY。',
     interactionTitle: '交互行为',
     interactionDesc: '调整触发方式和操作偏好',
     longPressDuration: '长按触发时长',
@@ -155,6 +161,7 @@ const t = {
     cloudConfig: 'OpenAI Whisper API',
     cloudConfigDesc: 'Use OpenAI-compatible Whisper API endpoint',
     apiKeyIndependent: 'Independent from the AI config API Key above',
+    cloudUsesAiKey: 'Cloud Whisper uses the API Key and Base URL from the AI Config above. To use a separate OpenAI key, set the OPENAI_API_KEY environment variable.',
     interactionTitle: 'Interaction',
     interactionDesc: 'Adjust trigger method and operation preferences',
     longPressDuration: 'Long Press Duration',
@@ -364,6 +371,25 @@ function AIPanel({ cfg, setCfg, agents }: {
 
 function STTPanel({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Config, v: any) => void }) {
   const txt = useT()
+  const [tencentTest, setTencentTest] = useState<{ loading: boolean; result: string | null; ok: boolean }>(
+    { loading: false, result: null, ok: false }
+  )
+
+  const handleTestTencent = async () => {
+    if (!api?.testTencentConnection) return
+    setTencentTest({ loading: true, result: null, ok: false })
+    try {
+      const r = await api.testTencentConnection({
+        secretId: cfg.tencentSecretId,
+        secretKey: cfg.tencentSecretKey,
+        appId: cfg.tencentAppId,
+      })
+      setTencentTest({ loading: false, result: r.message, ok: r.success })
+    } catch (err: any) {
+      setTencentTest({ loading: false, result: err?.message || '测试失败', ok: false })
+    }
+  }
+
   return (
     <div className="tab-panel">
       <SectionHeader title={txt.sttTitle} description={txt.sttDesc} />
@@ -385,10 +411,23 @@ function STTPanel({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Config, v: a
           <SettingInput label={txt.secretId} value={cfg.tencentSecretId} type="password" onChange={v => setCfg('tencentSecretId', v)} />
           <SettingInput label={txt.secretKey} value={cfg.tencentSecretKey} type="password" onChange={v => setCfg('tencentSecretKey', v)} />
           <SettingInput label={txt.appId} value={cfg.tencentAppId} onChange={v => setCfg('tencentAppId', v)} />
-          <button className="btn btn--outline" style={{ marginTop: 8 }}>
+          <button
+            className="btn btn--outline"
+            style={{ marginTop: 8 }}
+            onClick={handleTestTencent}
+            disabled={tencentTest.loading}
+          >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v5M4 3l3 3 3-3M2 9h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            {txt.testConnection}
+            {tencentTest.loading ? '...' : txt.testConnection}
           </button>
+          {tencentTest.result && (
+            <span className="setting-hint" style={{
+              marginTop: 4,
+              color: tencentTest.ok ? '#10b981' : '#ef4444',
+            }}>
+              {tencentTest.ok ? '✓ ' : '✗ '}{tencentTest.result}
+            </span>
+          )}
         </div>
       )}
 
@@ -416,8 +455,9 @@ function STTPanel({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Config, v: a
       {cfg.sttMode === 'cloud' && (
         <div className="sub-section">
           <SectionHeader title={txt.cloudConfig} description={txt.cloudConfigDesc} />
-          <SettingInput label="API Key (OPENAI_API_KEY)" value="" type="password" placeholder="sk-..." />
-          <span className="setting-hint" style={{ marginTop: -4, marginBottom: 8 }}>{txt.apiKeyIndependent}</span>
+          <div className="setting-hint" style={{ padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 6, marginBottom: 8 }}>
+            {txt.cloudUsesAiKey}
+          </div>
         </div>
       )}
     </div>
@@ -471,8 +511,27 @@ function InteractionPanel({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Conf
   )
 }
 
-function AboutPanel() {
+function AboutPanel({ version }: { version: string }) {
   const txt = useT()
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  useEffect(() => {
+    // Load cached status immediately (already checked on startup)
+    api?.getUpdateStatus?.().then(setUpdateStatus).catch(() => {})
+  }, [])
+
+  const handleCheck = async () => {
+    if (checking) return
+    setChecking(true)
+    try {
+      const result = await api?.checkForUpdates?.()
+      setUpdateStatus(result ?? null)
+    } finally {
+      setChecking(false)
+    }
+  }
+
   return (
     <div className="tab-panel">
       <div className="about-hero">
@@ -491,11 +550,41 @@ function AboutPanel() {
         </div>
       </div>
       <div className="about-section">
+        <h4 className="about-section-title">更新检查 / Updates</h4>
+        <div className="about-update-row">
+          {updateStatus?.hasUpdate ? (
+            <>
+              <span className="about-update-text">
+                ✨ 新版可用: <strong>v{updateStatus.latestVersion}</strong>
+                <span className="about-update-sub">（当前 v{updateStatus.currentVersion}）</span>
+              </span>
+              <a className="about-link" href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">
+                下载新版 →
+              </a>
+            </>
+          ) : updateStatus ? (
+            <>
+              <span className="about-update-text">✓ 已是最新版本 v{updateStatus.currentVersion}</span>
+              <button className="about-check-btn" onClick={handleCheck} disabled={checking}>
+                {checking ? '检查中...' : '重新检查'}
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="about-update-text about-update-unknown">尚未检查更新</span>
+              <button className="about-check-btn" onClick={handleCheck} disabled={checking}>
+                {checking ? '检查中...' : '检查更新'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="about-section">
         <h4 className="about-section-title">{txt.links}</h4>
         <div className="about-links">
-          <a className="about-link" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 1H2a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9M8 1h5v5M5 9L13 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>GitHub</a>
-          <a className="about-link" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 1H2a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9M8 1h5v5M5 9L13 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>{txt.docs}</a>
-          <a className="about-link" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 1H2a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9M8 1h5v5M5 9L13 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>{txt.feedback}</a>
+          <a className="about-link" href="https://github.com/jonsams968-cloud/onhands3" target="_blank" rel="noopener noreferrer"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 1H2a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9M8 1h5v5M5 9L13 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>GitHub</a>
+          <a className="about-link" href="https://github.com/jonsams968-cloud/onhands3#readme" target="_blank" rel="noopener noreferrer"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 1H2a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9M8 1h5v5M5 9L13 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>{txt.docs}</a>
+          <a className="about-link" href="https://github.com/jonsams968-cloud/onhands3/issues" target="_blank" rel="noopener noreferrer"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 1H2a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9M8 1h5v5M5 9L13 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>{txt.feedback}</a>
         </div>
       </div>
       <p className="about-footer">MIT License</p>
@@ -602,7 +691,7 @@ export default function SettingsApp() {
             {tab === 'ai' && <AIPanel cfg={cfg} setCfg={setCfg} agents={agents} />}
             {tab === 'stt' && <STTPanel cfg={cfg} setCfg={setCfg} />}
             {tab === 'interaction' && <InteractionPanel cfg={cfg} setCfg={setCfg} />}
-            {tab === 'about' && <AboutPanel />}
+            {tab === 'about' && <AboutPanel version={version} />}
           </main>
         </div>
 

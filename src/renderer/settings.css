@@ -524,6 +524,56 @@
   font-weight: 600;
 }
 
+/* Update checker row in About panel */
+.about-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.about-update-text {
+  color: var(--text-primary, #1a1a1a);
+}
+
+.about-update-text strong {
+  color: var(--accent, #2563eb);
+  font-weight: 600;
+}
+
+.about-update-sub {
+  color: var(--text-secondary, #6b7280);
+  margin-left: 4px;
+}
+
+.about-update-unknown {
+  color: var(--text-secondary, #6b7280);
+  font-style: italic;
+}
+
+.about-check-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-secondary, #f9fafb);
+  color: var(--text-primary, #1a1a1a);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.about-check-btn:hover:not(:disabled) {
+  background: var(--accent-glow, #dbeafe);
+  border-color: var(--accent, #2563eb);
+}
+
+.about-check-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .about-section { margin-bottom: 24px; }
 
 .about-section-title {

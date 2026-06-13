@@ -34,7 +34,7 @@ export interface DesktopContext {
 
 // ─── AI / Execution ───
 
-export type ExecutionMode = 'direct' | 'agent' | 'image' | 'video'
+export type ExecutionMode = 'direct' | 'agent' | 'image' | 'video' | 'dictation'
 
 export interface ExecutionRequest {
   command: string                 // User's voice/text command
@@ -128,6 +128,17 @@ export interface HistoryEntry {
   mode: ExecutionMode
 }
 
+// ─── Update Checker ───
+
+export interface UpdateStatus {
+  hasUpdate: boolean
+  currentVersion: string
+  latestVersion: string
+  releaseUrl: string
+  releaseNotes: string
+  checkedAt: number
+}
+
 // ─── IPC ───
 
 export interface RendererAPI {
@@ -147,4 +158,6 @@ export interface RendererAPI {
   regenerateMedia: () => Promise<void>
   saveMedia: (sourcePath: string, targetDir: string) => Promise<string | null>
   getVersion: () => Promise<string>
+  checkForUpdates: () => Promise<UpdateStatus | null>
+  getUpdateStatus: () => Promise<UpdateStatus | null>
 }

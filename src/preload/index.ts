@@ -60,4 +60,12 @@ contextBridge.exposeInMainWorld('onhands', {
 
   // App version (reads from package.json via app.getVersion())
   getVersion: () => ipcRenderer.invoke('app:version'),
+
+  // Update checker
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:status'),
+
+  // Test Tencent ASR connection
+  testTencentConnection: (creds: { secretId: string; secretKey: string; appId: string }) =>
+    ipcRenderer.invoke('stt:testTencent', creds),
 })

@@ -367,10 +367,11 @@ export class ContextCollector {
 
   private async captureScreen(): Promise<string | undefined> {
     const primary = screen.getPrimaryDisplay()
-    const { width, height, scaleFactor } = primary
+    const size = primary.size
+    const scaleFactor = primary.scaleFactor || 1
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: Math.round(width * scaleFactor), height: Math.round(height * scaleFactor) },
+      thumbnailSize: { width: Math.round(size.width * scaleFactor), height: Math.round(size.height * scaleFactor) },
     })
     return sources[0]?.thumbnail.toPNG().toString('base64') || undefined
   }

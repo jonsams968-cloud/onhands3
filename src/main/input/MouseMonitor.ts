@@ -1,5 +1,15 @@
 import { EventEmitter } from 'events'
 import type { LongPressEvent, LongPressEndEvent } from '../../shared/types'
+import {
+  classifyMouseAction,
+  INITIAL_STATE,
+  type ClickClassifierState,
+  type MouseActionType,
+  type MouseActionEvent,
+} from './classifyMouseAction'
+
+// Re-export so existing imports from MouseMonitor keep working
+export type { MouseActionType, MouseActionEvent }
 
 /**
  * Mouse long-press detector + action classifier using GetAsyncKeyState polling.
@@ -28,15 +38,6 @@ export interface LongPressEventExt extends LongPressEvent {
   isIBeam: boolean
 }
 
-export type MouseActionType = 'click' | 'drag' | 'dblclick' | 'trplclick'
-
-export interface MouseActionEvent {
-  type: MouseActionType
-  x: number
-  y: number
-  timestamp: number
-}
-
 export class MouseMonitor extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | null = null
   private pollTimer: ReturnType<typeof setInterval> | null = null
@@ -52,12 +53,7 @@ export class MouseMonitor extends EventEmitter {
   private mouseDownIsIBeam = false
 
   // ─── Click classification state ───
-  /** Consecutive click count (1=single, 2=double, 3=triple) */
-  private clickCount = 0
-  /** Timestamp of the previous click's mouseUp */
-  private lastClickTime = 0
-  /** Position of the previous click's mouseUp (for same-spot detection) */
-  private lastClickPos = { x: 0, y: 0 }
+  private clickState: ClickClassifierState = { ...INITIAL_STATE }
   /** Windows double-click time window (ms), queried via GetDoubleClickTime() */
   private doubleClickTime = 500
   /** Movement threshold for click-vs-drag classification on mouseUp (px) */
@@ -167,57 +163,28 @@ export class MouseMonitor extends EventEmitter {
       // Long-press consumed this gesture — emit longpressend and reset click sequence
       this.emit('longpressend', { x, y, duration: Date.now() - this.mouseDownTime } satisfies LongPressEndEvent)
       this.isLongPress = false
-      this.clickCount = 0
+      this.clickState = { ...INITIAL_STATE }
       return
     }
 
     const now = Date.now()
-    const dx = x - this.mouseDownPos.x
-    const dy = y - this.mouseDownPos.y
-    const distance = Math.sqrt(dx * dx + dy * dy)
-
-    // ─── Drag: significant movement between down and up ───
-    if (distance >= this.clickDragThresholdPx) {
-      this.emit('maction', {
-        type: 'drag',
-        x, y,
+    const { action, newState } = classifyMouseAction(
+      {
+        downX: this.mouseDownPos.x,
+        downY: this.mouseDownPos.y,
+        upX: x,
+        upY: y,
         timestamp: now,
-      } satisfies MouseActionEvent)
-      // Drag breaks any pending multi-click sequence
-      this.clickCount = 0
-      this.lastClickTime = 0
-      return
-    }
-
-    // ─── Click: classify as single / double / triple ───
-    const timeSinceLastClick = now - this.lastClickTime
-    const lastDx = x - this.lastClickPos.x
-    const lastDy = y - this.lastClickPos.y
-    const lastDistance = Math.sqrt(lastDx * lastDx + lastDy * lastDy)
-
-    if (
-      this.clickCount > 0 &&
-      timeSinceLastClick < this.doubleClickTime &&
-      lastDistance < this.multiClickMaxDistance
-    ) {
-      this.clickCount++
-    } else {
-      this.clickCount = 1
-    }
-    this.lastClickTime = now
-    this.lastClickPos = { x, y }
-
-    const type: MouseActionType =
-      this.clickCount === 1 ? 'click' :
-      this.clickCount === 2 ? 'dblclick' :
-      'trplclick'
-
-    this.emit('maction', { type, x, y, timestamp: now } satisfies MouseActionEvent)
-
-    // Reset after triple-click — Windows doesn't define quadruple-click
-    if (this.clickCount >= 3) {
-      this.clickCount = 0
-    }
+      },
+      this.clickState,
+      {
+        doubleClickTime: this.doubleClickTime,
+        multiClickMaxDistance: this.multiClickMaxDistance,
+        clickDragThresholdPx: this.clickDragThresholdPx,
+      },
+    )
+    this.clickState = newState
+    this.emit('maction', action)
   }
 
   private onMouseMove(x: number, y: number): void {

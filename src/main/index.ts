@@ -3,12 +3,15 @@ import path from 'path'
 import { MouseMonitor } from './input/MouseMonitor'
 import { Orchestrator } from './orchestrator/Orchestrator'
 import { loadConfig, saveConfig } from './config'
+import { TencentASR } from './stt/TencentASR'
+import { UpdateChecker } from './update/UpdateChecker'
 
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let mouseMonitor: MouseMonitor | null = null
 let orchestrator: Orchestrator | null = null
 let tray: Tray | null = null
+let updateChecker: UpdateChecker | null = null
 
 // Resolve icon paths — works in both dev and packaged mode
 function getIconPath(name: string): string {
@@ -76,26 +79,59 @@ function createWindow(): BrowserWindow {
   return win
 }
 
+function buildTrayMenu(): Menu {
+  const template: Electron.MenuItemConstructorOptions[] = []
+
+  // Show update notification at the top if available
+  const update = updateChecker?.getCachedResult()
+  if (update?.hasUpdate) {
+    template.push({
+      label: `✨ 新版可用: v${update.latestVersion} (当前 v${update.currentVersion})`,
+      click: () => {
+        if (update.releaseUrl) shell.openExternal(update.releaseUrl)
+      },
+    })
+    template.push({ type: 'separator' })
+  }
+
+  template.push({
+    label: '设置 / Settings',
+    click: () => openSettingsWindow(),
+  })
+  template.push({
+    label: '检查更新 / Check for Updates',
+    click: async () => {
+      if (!updateChecker) return
+      const result = await updateChecker.check()
+      if (tray) tray.setContextMenu(buildTrayMenu())
+      if (!result) {
+        // Show a brief notification in the tray tooltip
+        tray?.setToolTip('OnHands3 — 更新检查失败，请检查网络')
+        setTimeout(() => tray?.setToolTip('OnHands3'), 4000)
+      } else if (result.hasUpdate) {
+        tray?.setToolTip(`OnHands3 — 新版 v${result.latestVersion} 可用`)
+      } else {
+        tray?.setToolTip(`OnHands3 — 已是最新版 v${result.currentVersion}`)
+        setTimeout(() => tray?.setToolTip('OnHands3'), 4000)
+      }
+    },
+  })
+  template.push({ type: 'separator' })
+  template.push({
+    label: '退出 / Quit',
+    click: () => {
+      app.quit()
+    },
+  })
+
+  return Menu.buildFromTemplate(template)
+}
+
 function createTray(): Tray {
   const icon = nativeImage.createFromPath(getIconPath('tray.ico'))
   const t = new Tray(icon)
   t.setToolTip('OnHands3')
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: '设置 / Settings',
-      click: () => openSettingsWindow(),
-    },
-    { type: 'separator' },
-    {
-      label: '退出 / Quit',
-      click: () => {
-        app.quit()
-      },
-    },
-  ])
-
-  t.setContextMenu(contextMenu)
+  t.setContextMenu(buildTrayMenu())
 
   // Double-click tray icon to toggle overlay
   t.on('double-click', () => {
@@ -220,6 +256,15 @@ app.whenReady().then(async () => {
   // System tray
   tray = createTray()
 
+  // Update checker — fire-and-forget on startup, refresh tray menu when done
+  updateChecker = new UpdateChecker(app.getVersion())
+  updateChecker.check().then((result) => {
+    if (tray && result?.hasUpdate) {
+      tray.setContextMenu(buildTrayMenu())
+      console.log(`[main] Update available: v${result.latestVersion}`)
+    }
+  }).catch(() => { /* silent — network errors don't block startup */ })
+
   mouseMonitor = new MouseMonitor(config.longPressDuration, config.dragThresholdPx)
   orchestrator = new Orchestrator(mainWindow, mouseMonitor)
 
@@ -307,6 +352,34 @@ app.whenReady().then(async () => {
   // IPC: app version (reads from package.json — stays in sync automatically)
   ipcMain.handle('app:version', () => {
     return app.getVersion()
+  })
+
+  // IPC: check for updates on demand (also returns cached result)
+  ipcMain.handle('update:check', async () => {
+    if (!updateChecker) return null
+    const result = await updateChecker.check()
+    if (tray) tray.setContextMenu(buildTrayMenu())
+    return result
+  })
+
+  // IPC: get cached update status without re-checking
+  ipcMain.handle('update:status', () => {
+    return updateChecker?.getCachedResult() || null
+  })
+
+  // IPC: test Tencent ASR connection with given credentials
+  ipcMain.handle('stt:testTencent', async (_e, creds: { secretId: string; secretKey: string; appId: string }) => {
+    try {
+      const asr = new TencentASR({
+        ...loadConfig(),
+        tencentSecretId: creds.secretId,
+        tencentSecretKey: creds.secretKey,
+        tencentAppId: creds.appId,
+      } as any)
+      return await asr.testConnection()
+    } catch (err: any) {
+      return { success: false, message: err?.message || '测试失败' }
+    }
   })
 
   // Keyboard shortcuts for testing

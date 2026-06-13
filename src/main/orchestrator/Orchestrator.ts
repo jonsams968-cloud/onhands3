@@ -7,6 +7,7 @@ import { MouseMonitor } from '../input/MouseMonitor'
 import type { MouseActionEvent } from '../input/MouseMonitor'
 import { SelectionMonitor } from '../input/SelectionMonitor'
 import type { CapturedSelection } from '../input/SelectionMonitor'
+import { transitionSelection, INITIAL_SELECTION_STATE, type SelectionState } from '../input/selectionStateMachine'
 import { injectText } from '../input/ClipboardInjector'
 import { ContextCollector } from '../context/ContextCollector'
 import { RecentHistory } from '../history/RecentHistory'
@@ -116,7 +117,7 @@ export class Orchestrator {
   //
   // Only 'pending' or 'active' states allow a selection event to be stored.
   // Events arriving in 'none' or 'cancelled' are discarded as false positives.
-  private selectionState: 'none' | 'pending' | 'active' | 'cancelled' = 'none'
+  private selectionState: SelectionState = INITIAL_SELECTION_STATE
 
   // ESC handler: long-press (5s) → force kill
   private escRegistered = false
@@ -212,7 +213,7 @@ export class Orchestrator {
           }
           // Consume selection — reset state machine for the next cycle
           this.selectionMonitor.clearSelection()
-          this.selectionState = 'none'
+          this.selectionState = transitionSelection(this.selectionState, { kind: 'consume' }).state
           // Routing: only block dictation if selection is from the SAME foreground app.
           // Cross-app selections are likely stale (user switched away) — don't let them
           // prevent dictation in the current text field.
@@ -258,7 +259,7 @@ export class Orchestrator {
         }
         // Consume selection — reset state machine for the next cycle
         this.selectionMonitor.clearSelection()
-        this.selectionState = 'none'
+        this.selectionState = transitionSelection(this.selectionState, { kind: 'consume' }).state
 
         // I-beam in text field + selected text from SAME app → Agent mode (voice = instruction, selection = context)
         // I-beam in text field + selected text from DIFFERENT app → dictation (cross-app selection is likely stale)
@@ -393,30 +394,16 @@ export class Orchestrator {
   private setupSelectionStateMachine(): void {
     // ─── Mouse action events → drive state transitions ───
     this.mouse.on('maction', (e: MouseActionEvent) => {
-      if (e.type === 'click') {
-        // Single click = cursor repositioned. Any previous selection is stale.
-        if (this.selectionState !== 'none') {
-          this.selectionState = 'cancelled'
-          this.selectionMonitor.clearSelection()
-        }
-      } else {
-        // drag / dblclick / trplclick = user is selecting text
-        this.selectionState = 'pending'
-        this.selectionMonitor.clearSelection()
-      }
+      const r = transitionSelection(this.selectionState, { kind: 'maction', action: e.type })
+      this.selectionState = r.state
+      if (r.shouldClear) this.selectionMonitor.clearSelection()
     })
 
     // ─── Selection events → gated storage based on state ───
     this.selectionMonitor.on('selection', (sel: CapturedSelection) => {
-      if (this.selectionState === 'pending') {
-        // Genuine selection following a selection-intent gesture
-        this.selectionMonitor.storeSelection(sel)
-        this.selectionState = 'active'
-      } else if (this.selectionState === 'active') {
-        // Refresh — user selected different text while still active
-        this.selectionMonitor.storeSelection(sel)
-      }
-      // 'none' or 'cancelled' → discard (false positive from worker)
+      const r = transitionSelection(this.selectionState, { kind: 'selection' })
+      this.selectionState = r.state
+      if (r.shouldStore) this.selectionMonitor.storeSelection(sel)
     })
   }
 
