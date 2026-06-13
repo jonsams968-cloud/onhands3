@@ -741,27 +741,15 @@ function Oh3MemorySection({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Conf
           {/* Actions */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
-              className="setting-input-toggle"
+              className="setting-mini-btn"
               onClick={loadStats}
               disabled={loading}
-              style={{ padding: '6px 12px' }}
             >
               {loading ? '...' : txt.oh3Refresh}
             </button>
 
             {clearState === 'idle' && (stats?.validDirCount ?? 0) > 0 && (
-              <button
-                onClick={handleClearClick}
-                style={{
-                  padding: '6px 12px',
-                  background: 'transparent',
-                  border: '1px solid #ef4444',
-                  color: '#ef4444',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  fontSize: 13,
-                }}
-              >
+              <button className="setting-mini-btn setting-mini-btn--danger" onClick={handleClearClick}>
                 {txt.oh3ClearAll}
               </button>
             )}
@@ -769,33 +757,10 @@ function Oh3MemorySection({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Conf
             {clearState === 'confirming' && (
               <>
                 <span style={{ fontSize: 12, color: '#ef4444' }}>{txt.oh3ClearAllConfirm}</span>
-                <button
-                  onClick={handleClearConfirm}
-                  style={{
-                    padding: '6px 12px',
-                    background: '#ef4444',
-                    border: '1px solid #ef4444',
-                    color: 'white',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontWeight: 500,
-                  }}
-                >
+                <button className="setting-mini-btn setting-mini-btn--primary" onClick={handleClearConfirm}>
                   {txt.oh3ClearAllSecondConfirm}
                 </button>
-                <button
-                  onClick={handleClearCancel}
-                  style={{
-                    padding: '6px 12px',
-                    background: 'transparent',
-                    border: '1px solid var(--border, #ccc)',
-                    color: 'var(--text-primary, inherit)',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                  }}
-                >
+                <button className="setting-mini-btn" onClick={handleClearCancel}>
                   {txt.oh3Cancel}
                 </button>
               </>

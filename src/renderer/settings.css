@@ -269,6 +269,47 @@
 
 .setting-input-toggle:hover { color: var(--text-secondary); background: rgba(0,0,0,0.05); }
 
+/* Generic small action button (refresh, clear, etc.) */
+.setting-mini-btn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font);
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.setting-mini-btn:hover:not(:disabled) {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+.setting-mini-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.setting-mini-btn--danger {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.setting-mini-btn--danger:hover:not(:disabled) {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: white;
+}
+.setting-mini-btn--primary {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: white;
+  font-weight: 500;
+}
+.setting-mini-btn--primary:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
 .setting-select {
   width: 100%;
   padding: 8px 12px;
