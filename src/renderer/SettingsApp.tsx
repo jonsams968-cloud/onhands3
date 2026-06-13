@@ -21,7 +21,24 @@ interface Config {
   longPressDuration: number
   dragThresholdPx: number
   defaultPermissionAction: 'ask' | 'allow' | 'deny'
+  enableOh3: boolean
+  knownOh3Dirs: string[]
   language: 'zh' | 'en'
+}
+
+interface Oh3DirStats {
+  path: string
+  exists: boolean
+  sizeBytes: number
+  entryCount: number
+  lastModified: string
+}
+
+interface Oh3GlobalStats {
+  dirs: Oh3DirStats[]
+  totalSizeBytes: number
+  totalEntries: number
+  validDirCount: number
 }
 
 interface AgentInfo {
@@ -42,6 +59,8 @@ const api = (window as any).onhands as {
   getUpdateStatus?: () => Promise<UpdateStatus | null>
   testTencentConnection?: (creds: { secretId: string; secretKey: string; appId: string }) =>
     Promise<{ success: boolean; message: string }>
+  oh3Stats?: () => Promise<{ success: boolean; stats?: Oh3GlobalStats; error?: string }>
+  oh3ClearAll?: () => Promise<{ success: boolean; deletedCount?: number; error?: string }>
 } | undefined
 
 // ─── i18n ───
@@ -107,12 +126,32 @@ const t = {
     memorySystem: '目录记忆系统',
     memorySystemDesc: '每个目录独立积累 AI 操作上下文',
     enableOh3: '启用 .oh3/ 记忆系统',
-    enableOh3Desc: '自动创建隐藏目录记录操作日志、备份高危文件',
+    enableOh3Desc: 'Agent 执行命令前自动判断是否包含值得长期记住的规则/偏好/事实',
     retentionPeriod: '保留期限',
     days: '天',
     backupLimit: '备份空间上限',
     backupLimitHint: '单个目录备份数据最大 MB',
     comingSoon: '即将推出',
+    oh3Stats: '占用统计',
+    oh3NoMemory: '尚无目录记忆',
+    oh3NoMemoryDesc: '在 Agent 模式下操作文件后会自动创建',
+    oh3TotalDirs: '记忆目录',
+    oh3TotalSize: '总占用',
+    oh3TotalEntries: '记忆条目',
+    oh3Entries: '条',
+    oh3LastModified: '最近更新',
+    oh3Deleted: '已删除',
+    oh3NotFound: '目录已不存在',
+    oh3Refresh: '刷新',
+    oh3ClearAll: '清除所有目录记忆',
+    oh3ClearAllConfirm: '此操作不可恢复，将删除所有目录下的 .oh3/ 记忆数据。',
+    oh3ClearAllConfirmTitle: '确认清除所有目录记忆？',
+    oh3ClearAllSecondConfirm: '再次确认清除',
+    oh3Clearing: '清除中...',
+    oh3ClearFailed: '清除失败',
+    oh3LoadFailed: '加载失败',
+    oh3Confirm: '确认',
+    oh3Cancel: '取消',
     systemInfo: '系统信息',
     links: '链接',
     docs: '文档',
@@ -178,12 +217,32 @@ const t = {
     memorySystem: 'Directory Memory',
     memorySystemDesc: 'Each directory independently accumulates AI operation context',
     enableOh3: 'Enable .oh3/ Memory System',
-    enableOh3Desc: 'Auto-create hidden directory for operation logs and risky file backups',
+    enableOh3Desc: 'Agent judges whether each command contains worth-keeping rules/preferences/facts before execution',
     retentionPeriod: 'Retention Period',
     days: 'days',
     backupLimit: 'Backup Size Limit',
     backupLimitHint: 'Maximum backup size per directory (MB)',
     comingSoon: 'Coming Soon',
+    oh3Stats: 'Usage',
+    oh3NoMemory: 'No directory memory yet',
+    oh3NoMemoryDesc: 'Will be auto-created when you use Agent mode in any directory',
+    oh3TotalDirs: 'Memory dirs',
+    oh3TotalSize: 'Total size',
+    oh3TotalEntries: 'Memory entries',
+    oh3Entries: 'entries',
+    oh3LastModified: 'Last modified',
+    oh3Deleted: 'Deleted',
+    oh3NotFound: 'Directory not found',
+    oh3Refresh: 'Refresh',
+    oh3ClearAll: 'Clear all directory memory',
+    oh3ClearAllConfirm: 'This action is irreversible and will delete all .oh3/ memory data in every directory.',
+    oh3ClearAllConfirmTitle: 'Clear all directory memory?',
+    oh3ClearAllSecondConfirm: 'Confirm clear',
+    oh3Clearing: 'Clearing...',
+    oh3ClearFailed: 'Clear failed',
+    oh3LoadFailed: 'Load failed',
+    oh3Confirm: 'Confirm',
+    oh3Cancel: 'Cancel',
     systemInfo: 'System Info',
     links: 'Links',
     docs: 'Docs',
@@ -497,16 +556,261 @@ function InteractionPanel({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Conf
 
       <div className="section-divider" />
 
-      <SectionHeader title={txt.memorySystem} description={txt.memorySystemDesc} badge={txt.comingSoon} />
-      <SettingToggle label={txt.enableOh3} description={txt.enableOh3Desc} checked={false} disabled />
-      <div className="sub-section section-field--disabled">
-        <SettingSelect label={txt.retentionPeriod} value="7" options={[
-          { value: '7', label: `7 ${txt.days}` },
-          { value: '14', label: `14 ${txt.days}` },
-          { value: '30', label: `30 ${txt.days}` },
-        ]} />
-        <SettingInput label={txt.backupLimit} value="200" type="number" hint={txt.backupLimitHint} />
-      </div>
+      <Oh3MemorySection cfg={cfg} setCfg={setCfg} />
+    </div>
+  )
+}
+
+// ─── .oh3/ Memory Section ───
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function formatRelativeTime(iso: string): string {
+  if (!iso) return '—'
+  const then = new Date(iso).getTime()
+  if (!then) return '—'
+  const diffMs = Date.now() - then
+  const diffMin = Math.floor(diffMs / 60_000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return `${diffMin} min ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr} hr ago`
+  const diffDay = Math.floor(diffHr / 24)
+  if (diffDay < 30) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`
+  return new Date(iso).toLocaleDateString()
+}
+
+function Oh3MemorySection({ cfg, setCfg }: { cfg: Config; setCfg: (k: keyof Config, v: any) => void }) {
+  const txt = useT()
+  const [stats, setStats] = useState<Oh3GlobalStats | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [clearState, setClearState] = useState<'idle' | 'confirming' | 'clearing' | 'done' | 'failed'>('idle')
+
+  const loadStats = async () => {
+    if (!api?.oh3Stats) return
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const r = await api.oh3Stats()
+      if (r.success && r.stats) {
+        setStats(r.stats)
+      } else {
+        setLoadError(r.error || txt.oh3LoadFailed)
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || txt.oh3LoadFailed)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (cfg.enableOh3) loadStats()
+  }, [cfg.enableOh3])
+
+  const handleClearClick = () => {
+    setClearState('confirming')
+  }
+
+  const handleClearConfirm = async () => {
+    setClearState('clearing')
+    try {
+      if (!api?.oh3ClearAll) throw new Error('IPC not available')
+      const r = await api.oh3ClearAll()
+      if (r.success) {
+        setClearState('done')
+        await loadStats()
+        setTimeout(() => setClearState('idle'), 2500)
+      } else {
+        throw new Error(r.error)
+      }
+    } catch (err: any) {
+      setClearState('failed')
+      setTimeout(() => setClearState('idle'), 3000)
+    }
+  }
+
+  const handleClearCancel = () => setClearState('idle')
+
+  return (
+    <>
+      <SectionHeader title={txt.memorySystem} description={txt.memorySystemDesc} />
+      <SettingToggle
+        label={txt.enableOh3}
+        description={txt.enableOh3Desc}
+        checked={cfg.enableOh3}
+        onChange={v => setCfg('enableOh3', v)}
+      />
+
+      {cfg.enableOh3 && (
+        <div className="sub-section">
+          {/* Stats summary */}
+          {loadError && (
+            <div className="setting-hint" style={{ color: '#ef4444', marginBottom: 12 }}>
+              {txt.oh3LoadFailed}: {loadError}
+            </div>
+          )}
+
+          {!loadError && stats && (
+            <>
+              {stats.validDirCount === 0 ? (
+                <div className="setting-hint" style={{ marginBottom: 12 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{txt.oh3NoMemory}</div>
+                  <div>{txt.oh3NoMemoryDesc}</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+                    <StatCard label={txt.oh3TotalDirs} value={String(stats.validDirCount)} />
+                    <StatCard label={txt.oh3TotalSize} value={formatBytes(stats.totalSizeBytes)} />
+                    <StatCard label={txt.oh3TotalEntries} value={String(stats.totalEntries)} />
+                  </div>
+
+                  {/* Per-directory breakdown */}
+                  <div style={{ marginBottom: 12 }}>
+                    {stats.dirs.filter(d => d.exists).map(d => (
+                      <div key={d.path} style={{
+                        padding: '8px 10px',
+                        marginBottom: 6,
+                        background: 'var(--bg-surface-2, #f5f5f5)',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 12,
+                      }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            fontFamily: 'ui-monospace, Consolas, monospace',
+                          }} title={d.path}>
+                            {d.path}
+                          </div>
+                          <div style={{ color: 'var(--text-secondary, #888)', marginTop: 2 }}>
+                            {d.entryCount} {txt.oh3Entries} · {formatBytes(d.sizeBytes)} · {txt.oh3LastModified}: {formatRelativeTime(d.lastModified)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {stats.dirs.filter(d => !d.exists).map(d => (
+                      <div key={d.path} style={{
+                        padding: '8px 10px',
+                        marginBottom: 6,
+                        background: 'var(--bg-surface-2, #f5f5f5)',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        opacity: 0.6,
+                      }} title={d.path}>
+                        <span style={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{d.path}</span>
+                        <span style={{ marginLeft: 8, color: '#a85529' }}>· {txt.oh3NotFound}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="setting-input-toggle"
+              onClick={loadStats}
+              disabled={loading}
+              style={{ padding: '6px 12px' }}
+            >
+              {loading ? '...' : txt.oh3Refresh}
+            </button>
+
+            {clearState === 'idle' && (stats?.validDirCount ?? 0) > 0 && (
+              <button
+                onClick={handleClearClick}
+                style={{
+                  padding: '6px 12px',
+                  background: 'transparent',
+                  border: '1px solid #ef4444',
+                  color: '#ef4444',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                {txt.oh3ClearAll}
+              </button>
+            )}
+
+            {clearState === 'confirming' && (
+              <>
+                <span style={{ fontSize: 12, color: '#ef4444' }}>{txt.oh3ClearAllConfirm}</span>
+                <button
+                  onClick={handleClearConfirm}
+                  style={{
+                    padding: '6px 12px',
+                    background: '#ef4444',
+                    border: '1px solid #ef4444',
+                    color: 'white',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  {txt.oh3ClearAllSecondConfirm}
+                </button>
+                <button
+                  onClick={handleClearCancel}
+                  style={{
+                    padding: '6px 12px',
+                    background: 'transparent',
+                    border: '1px solid var(--border, #ccc)',
+                    color: 'var(--text-primary, inherit)',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                  }}
+                >
+                  {txt.oh3Cancel}
+                </button>
+              </>
+            )}
+
+            {clearState === 'clearing' && (
+              <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>{txt.oh3Clearing}</span>
+            )}
+
+            {clearState === 'done' && (
+              <span style={{ fontSize: 12, color: '#10b981' }}>✓ {txt.oh3Deleted}</span>
+            )}
+
+            {clearState === 'failed' && (
+              <span style={{ fontSize: 12, color: '#ef4444' }}>✗ {txt.oh3ClearFailed}</span>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{
+      padding: '10px 12px',
+      background: 'var(--bg-surface-2, #f5f5f5)',
+      borderRadius: 6,
+      border: '1px solid var(--border, rgba(0,0,0,0.06))',
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary, #888)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 600 }}>{value}</div>
     </div>
   )
 }
@@ -620,7 +924,9 @@ export default function SettingsApp() {
         sttMode: 'tencent', whisperModel: 'large-v3-turbo',
         tencentSecretId: '', tencentSecretKey: '', tencentAppId: '',
         longPressDuration: 800, dragThresholdPx: 15,
-        defaultPermissionAction: 'ask', language: 'zh',
+        defaultPermissionAction: 'ask',
+        enableOh3: true, knownOh3Dirs: [],
+        language: 'zh',
       })
       setAgents([
         { name: 'Claude Code', path: '', installed: false },
@@ -640,7 +946,11 @@ export default function SettingsApp() {
     if (!cfg || !api || saving) return
     setSaving(true)
     try {
-      const updated = await api.settingsSave({ ...cfg, language: lang })
+      // Strip knownOh3Dirs — main process owns this field and updates it
+      // continuously as new .oh3/ dirs are created. Sending renderer's stale
+      // copy would clobber the main process's in-memory list.
+      const { knownOh3Dirs: _omit, ...rest } = cfg
+      const updated = await api.settingsSave({ ...rest, language: lang })
       setRawCfg(updated)
       setSaved(true)
       setTimeout(() => setSaved(false), 1500)

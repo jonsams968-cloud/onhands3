@@ -749,7 +749,8 @@ export class Orchestrator {
     // Sequential: DirectAI checks if user stated a rule/preference/fact,
     // writes it to .oh3/ if yes, THEN agent runs (and picks up the new rule
     // via formatRulesForPrompt in buildAgentPrompt).
-    if (mode === 'agent' && this.agent && context.workingDirectory) {
+    const oh3Enabled = loadConfig().enableOh3
+    if (oh3Enabled && mode === 'agent' && this.agent && context.workingDirectory) {
       try {
         ensureInitialized(context.workingDirectory)
         const judgment = await this.directAI.judgeMemory(command)
@@ -1348,7 +1349,7 @@ export class Orchestrator {
     }
 
     // Inject project memory from .oh3/ (rules / preferences / facts)
-    if (context.workingDirectory) {
+    if (loadConfig().enableOh3 && context.workingDirectory) {
       const memorySection = formatRulesForPrompt(context.workingDirectory)
       if (memorySection) {
         parts.push(`## 项目记忆（来自 .oh3/，必须遵守）`)

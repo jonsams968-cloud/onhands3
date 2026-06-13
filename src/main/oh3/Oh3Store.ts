@@ -32,6 +32,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
+import { loadConfig, saveConfig } from '../config'
 
 // ─── 类型 ─────────────────────────────────────────────────────────────────────
 
@@ -202,6 +203,16 @@ export function ensureInitialized(workDir: string): void {
     } catch (err) {
       console.warn(`[Oh3Store] 设置隐藏属性失败 ${oh3}:`, err)
     }
+  }
+
+  // 记录到 knownOh3Dirs（用于设置页面统计 / 清除）
+  try {
+    const cfg = loadConfig()
+    if (!cfg.knownOh3Dirs.includes(workDir)) {
+      saveConfig({ knownOh3Dirs: [...cfg.knownOh3Dirs, workDir] })
+    }
+  } catch (err) {
+    console.warn(`[Oh3Store] 记录 knownOh3Dirs 失败:`, err)
   }
 }
 
@@ -525,4 +536,153 @@ export function formatRulesForPrompt(workDir: string): string {
     for (const f of facts) parts.push(`- ${f.content}`)
   }
   return parts.join('\n')
+}
+
+// ─── 全局统计 / 清除 ──────────────────────────────────────────────────────────
+
+export interface Oh3DirStats {
+  path: string
+  exists: boolean
+  sizeBytes: number
+  entryCount: number
+  lastModified: string  // ISO 或空字符串
+}
+
+export interface Oh3GlobalStats {
+  dirs: Oh3DirStats[]
+  totalSizeBytes: number
+  totalEntries: number
+  validDirCount: number
+}
+
+/**
+ * 计算一个目录（递归）的总字节数。
+ */
+function calcDirSizeBytes(dirPath: string): number {
+  if (!fs.existsSync(dirPath)) return 0
+  let total = 0
+  const stack = [dirPath]
+  while (stack.length) {
+    const cur = stack.pop()!
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(cur, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const ent of entries) {
+      const full = path.join(cur, ent.name)
+      try {
+        if (ent.isDirectory()) {
+          stack.push(full)
+        } else if (ent.isFile()) {
+          total += fs.statSync(full).size
+        }
+      } catch {
+        // ignore stat errors
+      }
+    }
+  }
+  return total
+}
+
+/**
+ * 收集所有已知 .oh3/ 目录的统计信息。
+ * 自动剔除 config 里记录但已被外部删除的目录。
+ */
+export function getStats(): Oh3GlobalStats {
+  const cfg = loadConfig()
+  const dirs: Oh3DirStats[] = []
+  let totalSizeBytes = 0
+  let totalEntries = 0
+  let validDirCount = 0
+
+  const validPaths: string[] = []
+
+  for (const dirPath of cfg.knownOh3Dirs) {
+    const oh3 = oh3Path(dirPath)
+    const exists = fs.existsSync(path.join(oh3, CONFIG_JSON))
+    if (!exists) {
+      // config 里有记录但目录已被外部删除 — 仍报给 UI，但不计入统计
+      dirs.push({
+        path: dirPath,
+        exists: false,
+        sizeBytes: 0,
+        entryCount: 0,
+        lastModified: '',
+      })
+      continue
+    }
+
+    validPaths.push(dirPath)
+
+    const sizeBytes = calcDirSizeBytes(oh3)
+    const data = loadMemory(dirPath)
+    let lastModified = ''
+    try {
+      lastModified = fs.statSync(memoryMdPath(dirPath)).mtime.toISOString()
+    } catch {}
+
+    dirs.push({
+      path: dirPath,
+      exists: true,
+      sizeBytes,
+      entryCount: data.entries.length,
+      lastModified,
+    })
+
+    totalSizeBytes += sizeBytes
+    totalEntries += data.entries.length
+    validDirCount++
+  }
+
+  // 如果发现无效目录，更新 config（一次清理）
+  if (validPaths.length !== cfg.knownOh3Dirs.length) {
+    try {
+      saveConfig({ knownOh3Dirs: validPaths })
+    } catch {}
+  }
+
+  return { dirs, totalSizeBytes, totalEntries, validDirCount }
+}
+
+/**
+ * 清除所有 .oh3/ 目录的记忆数据。
+ *
+ * 策略：删除 .oh3/ 整个目录（包括 config.json、memory.md、_index.json）。
+ * 下次在该目录使用 Agent 时会自动重建（空状态）。
+ *
+ * @returns 删除的目录数量
+ */
+export function clearAll(): number {
+  const cfg = loadConfig()
+  let deletedCount = 0
+
+  for (const dirPath of cfg.knownOh3Dirs) {
+    const oh3 = oh3Path(dirPath)
+    if (!fs.existsSync(oh3)) continue
+
+    try {
+      // Windows 下先清除隐藏+系统属性，否则 rmSync 可能失败
+      if (process.platform === 'win32') {
+        try {
+          execFileSync('attrib', ['-H', '-S', oh3], { windowsHide: true })
+        } catch {}
+      }
+      fs.rmSync(oh3, { recursive: true, force: true })
+      deletedCount++
+      console.log(`[Oh3Store] Cleared ${oh3}`)
+    } catch (err: any) {
+      console.warn(`[Oh3Store] 清除 ${oh3} 失败:`, err.message || err)
+    }
+  }
+
+  // 清空 knownOh3Dirs
+  try {
+    saveConfig({ knownOh3Dirs: [] })
+  } catch (err) {
+    console.warn(`[Oh3Store] 清空 knownOh3Dirs 失败:`, err)
+  }
+
+  return deletedCount
 }

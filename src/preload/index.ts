@@ -68,4 +68,8 @@ contextBridge.exposeInMainWorld('onhands', {
   // Test Tencent ASR connection
   testTencentConnection: (creds: { secretId: string; secretKey: string; appId: string }) =>
     ipcRenderer.invoke('stt:testTencent', creds),
+
+  // .oh3/ directory memory stats and management
+  oh3Stats: () => ipcRenderer.invoke('oh3:stats'),
+  oh3ClearAll: () => ipcRenderer.invoke('oh3:clearAll'),
 })

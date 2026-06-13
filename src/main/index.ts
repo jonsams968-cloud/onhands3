@@ -5,6 +5,7 @@ import { Orchestrator } from './orchestrator/Orchestrator'
 import { loadConfig, saveConfig } from './config'
 import { TencentASR } from './stt/TencentASR'
 import { UpdateChecker } from './update/UpdateChecker'
+import { getStats as getOh3Stats, clearAll as clearOh3All } from './oh3/Oh3Store'
 
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
@@ -379,6 +380,25 @@ app.whenReady().then(async () => {
       return await asr.testConnection()
     } catch (err: any) {
       return { success: false, message: err?.message || '测试失败' }
+    }
+  })
+
+  // IPC: get .oh3/ memory stats (size, entry count per directory)
+  ipcMain.handle('oh3:stats', () => {
+    try {
+      return { success: true, stats: getOh3Stats() }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to get stats' }
+    }
+  })
+
+  // IPC: clear all .oh3/ memory data (irreversible — UI must confirm twice)
+  ipcMain.handle('oh3:clearAll', () => {
+    try {
+      const deletedCount = clearOh3All()
+      return { success: true, deletedCount }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to clear' }
     }
   })
 

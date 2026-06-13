@@ -1,7 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+
+// Mock config to control knownOh3Dirs in tests
+const mockConfig: { enableOh3: boolean; knownOh3Dirs: string[] } = {
+  enableOh3: true,
+  knownOh3Dirs: [],
+}
+
+vi.mock('../../src/main/config', () => ({
+  loadConfig: () => mockConfig,
+  saveConfig: (data: any) => {
+    if (data.knownOh3Dirs !== undefined) mockConfig.knownOh3Dirs = data.knownOh3Dirs
+    return { ...mockConfig, ...data }
+  },
+}))
+
 import {
   ensureInitialized,
   loadMemory,
@@ -9,6 +24,8 @@ import {
   removeRule,
   rebuildIndex,
   formatRulesForPrompt,
+  getStats,
+  clearAll,
   oh3Path,
   memoryMdPath,
   indexJsonPath,
@@ -19,6 +36,7 @@ let tmpDir: string
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oh3-test-'))
+  mockConfig.knownOh3Dirs = []
 })
 
 afterEach(() => {
@@ -461,5 +479,101 @@ describe('端到端工作流', () => {
     expect(formatted).toContain('auto rule')
     expect(formatted).toContain('手动规则 1')
     expect(formatted).toContain('手动规则 2')
+  })
+})
+
+// ─── getStats / clearAll ─────────────────────────────────────────────────────
+
+describe('getStats', () => {
+  it('无目录时返回空统计', () => {
+    mockConfig.knownOh3Dirs = []
+    const stats = getStats()
+    expect(stats.dirs).toEqual([])
+    expect(stats.totalSizeBytes).toBe(0)
+    expect(stats.totalEntries).toBe(0)
+    expect(stats.validDirCount).toBe(0)
+  })
+
+  it('统计多个目录的总大小和条目数', () => {
+    const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'oh3-stats-1-'))
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'oh3-stats-2-'))
+    try {
+      ensureInitialized(dir1)
+      ensureInitialized(dir2)
+      appendRule(dir1, 'rule', 'rule 1', 'user')
+      appendRule(dir1, 'fact', 'fact 1', 'user')
+      appendRule(dir2, 'preference', 'pref 1', 'user')
+
+      mockConfig.knownOh3Dirs = [dir1, dir2]
+      const stats = getStats()
+
+      expect(stats.validDirCount).toBe(2)
+      expect(stats.totalEntries).toBe(3)
+      expect(stats.totalSizeBytes).toBeGreaterThan(0)
+
+      const d1 = stats.dirs.find(d => d.path === dir1)
+      const d2 = stats.dirs.find(d => d.path === dir2)
+      expect(d1?.entryCount).toBe(2)
+      expect(d2?.entryCount).toBe(1)
+      expect(d1?.exists).toBe(true)
+    } finally {
+      fs.rmSync(dir1, { recursive: true, force: true })
+      fs.rmSync(dir2, { recursive: true, force: true })
+    }
+  })
+
+  it('目录已被外部删除 → 标记 exists=false，从 knownOh3Dirs 清理', () => {
+    const ghost = path.join(os.tmpdir(), 'oh3-ghost-' + Date.now())
+    mockConfig.knownOh3Dirs = [ghost]
+
+    const stats = getStats()
+    expect(stats.validDirCount).toBe(0)
+    expect(stats.dirs[0].exists).toBe(false)
+
+    // 已从 knownOh3Dirs 清理
+    expect(mockConfig.knownOh3Dirs).toEqual([])
+  })
+})
+
+describe('clearAll', () => {
+  it('删除所有 .oh3/ 目录', () => {
+    const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'oh3-clear-1-'))
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'oh3-clear-2-'))
+    try {
+      ensureInitialized(dir1)
+      ensureInitialized(dir2)
+      appendRule(dir1, 'rule', 'test', 'user')
+
+      mockConfig.knownOh3Dirs = [dir1, dir2]
+      const count = clearAll()
+
+      expect(count).toBe(2)
+      expect(fs.existsSync(oh3Path(dir1))).toBe(false)
+      expect(fs.existsSync(oh3Path(dir2))).toBe(false)
+      expect(mockConfig.knownOh3Dirs).toEqual([])
+    } finally {
+      fs.rmSync(dir1, { recursive: true, force: true })
+      fs.rmSync(dir2, { recursive: true, force: true })
+    }
+  })
+
+  it('部分目录已被删除 → 只清除存在的', () => {
+    const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'oh3-clear-real-'))
+    const ghost = path.join(os.tmpdir(), 'oh3-clear-ghost-' + Date.now())
+    try {
+      ensureInitialized(dir1)
+      mockConfig.knownOh3Dirs = [dir1, ghost]
+
+      const count = clearAll()
+      expect(count).toBe(1)
+      expect(fs.existsSync(oh3Path(dir1))).toBe(false)
+    } finally {
+      fs.rmSync(dir1, { recursive: true, force: true })
+    }
+  })
+
+  it('knownOh3Dirs 为空 → 返回 0', () => {
+    mockConfig.knownOh3Dirs = []
+    expect(clearAll()).toBe(0)
   })
 })

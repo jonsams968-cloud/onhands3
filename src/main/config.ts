@@ -35,6 +35,10 @@ export interface Config {
   permissionTimeout: number
   defaultPermissionAction: 'ask' | 'allow' | 'deny'
 
+  // .oh3/ directory memory system
+  enableOh3: boolean
+  knownOh3Dirs: string[]   // 自动记录所有创建过 .oh3/ 的目录
+
   // Language
   language: 'zh' | 'en'
 }
@@ -71,6 +75,9 @@ function getDefaultConfig(): Config {
     permissionPort: 19843,
     permissionTimeout: 15000,
     defaultPermissionAction: 'ask',
+
+    enableOh3: true,
+    knownOh3Dirs: [],
 
     language: 'zh',
   }
