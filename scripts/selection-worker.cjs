@@ -24,16 +24,28 @@ async function main() {
     const SH = require('selection-hook')
     hook = new SH()
 
-    // Re-enable clipboard fallback (Ctrl+C simulation as last resort).
-    // This is SAFE here because we run in a standalone Node.js process,
-    // NOT inside Electron. The Ctrl+C deadlock only happens when running
-    // in Electron's main process (Chromium message loop can't process the
-    // simulated keypress while the Node event loop is blocked).
-    // Clipboard fallback covers apps where UIA/IAccessible can't read
-    // selections (e.g. GitHub, Gmail, complex SPA frameworks).
+    // IMPORTANT: Disable clipboard fallback.
+    //
+    // selection-hook enables clipboard fallback by default — when mouse-up
+    // fires and UIA/IAccessible can't read a selection, it simulates Ctrl+C
+    // to copy whatever might be selected, then reads the clipboard.
+    //
+    // This BREAKS screen capture tools (Win+Shift+S, Snipping Tool, etc.):
+    //   1. User drags to select screenshot region → mouse-up
+    //   2. selection-hook fires Ctrl+C (no text selected, so it copies nothing/empty)
+    //   3. Screenshot tool writes image to clipboard
+    //   4. The two race; Ctrl+C often wins, clobbering the image with empty text
+    //   5. User pastes → nothing
+    //
+    // Disabling clipboard fallback here means:
+    //   - Passive text-selection events won't fire for apps where UIA/IAccessible
+    //     can't read (some Electron apps, SPA frameworks)
+    //   - BUT the snapshot mechanism (getCurrentSelection, called after maction
+    //     drag/dblclick/trplclick) still works — it uses the same detection
+    //     priority internally and only fires on user-confirmed selection intent
     //
     // Detection priority: UIA (method=1) > IAccessible (method=3) > Clipboard (method=99)
-    // hook.enableClipboard()  -- enabled by default, no need to call
+    hook.disableClipboard()
 
     hook.on('text-selection', (data) => {
       if (data.text && data.text.trim()) {
