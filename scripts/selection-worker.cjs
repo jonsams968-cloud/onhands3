@@ -24,28 +24,74 @@ async function main() {
     const SH = require('selection-hook')
     hook = new SH()
 
-    // IMPORTANT: Disable clipboard fallback.
+    // Clipboard fallback policy: enabled by default (good for SPA selection
+    // detection), but temporarily disabled while the user is taking a
+    // screenshot. selection-hook's fallback simulates Ctrl+C on mouse-up,
+    // which races against screenshot tools writing image data to the clipboard
+    // and clobbers it (Win+Shift+S, Snipping Tool, ShareX, Snipaste, etc.).
     //
-    // selection-hook enables clipboard fallback by default — when mouse-up
-    // fires and UIA/IAccessible can't read a selection, it simulates Ctrl+C
-    // to copy whatever might be selected, then reads the clipboard.
-    //
-    // This BREAKS screen capture tools (Win+Shift+S, Snipping Tool, etc.):
-    //   1. User drags to select screenshot region → mouse-up
-    //   2. selection-hook fires Ctrl+C (no text selected, so it copies nothing/empty)
-    //   3. Screenshot tool writes image to clipboard
-    //   4. The two race; Ctrl+C often wins, clobbering the image with empty text
-    //   5. User pastes → nothing
-    //
-    // Disabling clipboard fallback here means:
-    //   - Passive text-selection events won't fire for apps where UIA/IAccessible
-    //     can't read (some Electron apps, SPA frameworks)
-    //   - BUT the snapshot mechanism (getCurrentSelection, called after maction
-    //     drag/dblclick/trplclick) still works — it uses the same detection
-    //     priority internally and only fires on user-confirmed selection intent
+    // Solution: listen for screenshot hotkeys (PrintScreen, Win+Shift+S) and
+    // disable clipboard fallback for ~5 seconds while the user is capturing.
+    // After the window expires, restore the default behavior.
     //
     // Detection priority: UIA (method=1) > IAccessible (method=3) > Clipboard (method=99)
-    hook.disableClipboard()
+    let clipboardEnabled = true
+    let screenshotTimer = null
+    let winPressed = false
+    let shiftPressed = false
+
+    const SCREENSHOT_DISABLE_MS = 5000
+
+    function setClipboardEnabled(enabled) {
+      if (enabled === clipboardEnabled) return
+      clipboardEnabled = enabled
+      if (enabled) {
+        hook.enableClipboard()
+        console.error('[selection-worker] Clipboard fallback re-enabled')
+      } else {
+        hook.disableClipboard()
+        console.error('[selection-worker] Clipboard fallback disabled (screenshot mode)')
+      }
+    }
+
+    function enterScreenshotMode() {
+      setClipboardEnabled(false)
+      if (screenshotTimer) clearTimeout(screenshotTimer)
+      screenshotTimer = setTimeout(() => {
+        screenshotTimer = null
+        setClipboardEnabled(true)
+      }, SCREENSHOT_DISABLE_MS)
+    }
+
+    hook.on('key-down', (data) => {
+      const key = data.uniKey
+
+      // Track modifier states for Win+Shift+S detection.
+      // (sys flag tells us a modifier is down, but doesn't distinguish which.)
+      if (key === 'Meta' || key === 'OS') winPressed = true
+      if (key === 'Shift') shiftPressed = true
+
+      // PrintScreen: standalone screenshot key.
+      // Most generic — works for full-screen capture, Snipping Tool, etc.
+      if (key === 'PrintScreen') {
+        enterScreenshotMode()
+        return
+      }
+
+      // Win+Shift+S: Windows Snipping Tool overlay.
+      // sys=true (Win is pressed) + shift tracked separately + 's' key.
+      // Avoids false positives from Ctrl+S, Win+S, etc.
+      if (key === 's' && data.sys && winPressed && shiftPressed) {
+        enterScreenshotMode()
+        return
+      }
+    })
+
+    hook.on('key-up', (data) => {
+      const key = data.uniKey
+      if (key === 'Meta' || key === 'OS') winPressed = false
+      if (key === 'Shift') shiftPressed = false
+    })
 
     hook.on('text-selection', (data) => {
       if (data.text && data.text.trim()) {
