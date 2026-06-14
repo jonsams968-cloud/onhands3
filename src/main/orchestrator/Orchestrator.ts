@@ -265,12 +265,21 @@ export class Orchestrator {
         // I-beam in text field + selected text from SAME app → Agent mode (voice = instruction, selection = context)
         // I-beam in text field + selected text from DIFFERENT app → dictation (cross-app selection is likely stale)
         // I-beam in text field + NO selection → dictation mode (voice → text injection)
+        //
+        // EXCEPTION: snapshot selections (sel.isSnapshot === true) are obtained
+        // via an authoritative foreground-window query fired right after the
+        // user actively dragged/double-clicked. These are guaranteed same-window
+        // regardless of programName — selection-hook often reports an embedded
+        // child process (msedgewebview2.exe inside Outlook/Teams) while the
+        // foreground window is the parent app (olk.exe). For snapshots we skip
+        // the programName check entirely.
         if (e.isIBeam) {
-          const sameApp = sel && this.pendingWindow?.processName &&
+          const sameApp = sel?.isSnapshot || (sel && this.pendingWindow?.processName &&
             sel.programName.replace(/\.exe$/i, '').toLowerCase() ===
-            this.pendingWindow.processName.replace(/\.exe$/i, '').toLowerCase()
+            this.pendingWindow.processName.replace(/\.exe$/i, '').toLowerCase())
           this.pendingDictation = !(sameApp && sel?.text)
-          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}${!sameApp && sel ? ' (cross-app selection ignored)' : ''}`)
+          const reason = sel?.isSnapshot ? ' (snapshot — authoritative)' : (!sameApp && sel ? ' (cross-app selection ignored)' : '')
+          console.log(`[input] I-beam cursor → ${this.pendingDictation ? 'dictation mode' : 'agent mode (selected text as context)'}${reason}`)
         } else {
           this.pendingDictation = false
         }

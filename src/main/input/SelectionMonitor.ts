@@ -32,6 +32,23 @@ export interface CapturedSelection {
   text: string
   programName: string
   timestamp: number
+  /**
+   * True if this selection was obtained via requestSnapshot() — an authoritative
+   * query of the CURRENT foreground-window selection, fired immediately after
+   * the user actively dragged/double-clicked to select.
+   *
+   * Why this flag matters: selection-hook reports programName from whichever
+   * process owns the UIA/IAccessible/Clipboard node the user selected. For
+   * apps with embedded WebView2 (Outlook, Teams, etc.), the actual selected
+   * text lives in a child msedgewebview2.exe process while the foreground
+   * window belongs to the parent app (olk.exe). A naive programName match
+   * would treat these as cross-app and wrongly discard the selection.
+   *
+   * Snapshots are guaranteed same-app because they were just captured from
+   * the active window. Consumers should treat isSnapshot===true as authoritative
+   * regardless of programName mismatch.
+   */
+  isSnapshot?: boolean
 }
 
 const METHOD_NAMES: Record<number, string> = {
@@ -124,6 +141,7 @@ export class SelectionMonitor extends EventEmitter {
           text: msg.text,
           programName: msg.programName || '',
           timestamp: Date.now(),
+          isSnapshot: msg.snapshot === true,
         }
         // Emit — Orchestrator's state machine decides whether to store.
         // For 'snapshot' results (msg.snapshot === true), also emit a
