@@ -741,29 +741,39 @@ export class Orchestrator {
 
     // ─── Text pipeline (direct / agent) ───
 
-    // Show routing decision
+    // Detailed step-by-step logging — without this, a crash between
+    // "[pipeline] Context:" and "[pipeline] Executing via..." leaves no
+    // evidence of which call failed. See v0.6.4 crash investigation.
+    console.log(`[pipeline] Step 1: sendState('routing', ${mode})`)
     this.sendState('routing', mode)
+    console.log(`[pipeline] Step 2: await 600ms routing delay`)
     await new Promise(r => setTimeout(r, 600))
 
     if (this.aborted) return
 
+    console.log(`[pipeline] Step 3: screen.getPrimaryDisplay()`)
     const display = screen.getPrimaryDisplay()
     const resolution = `${display.size.width}x${display.size.height}`
 
-    // Show processing state
+    console.log(`[pipeline] Step 4: sendState('processing')`)
     this.sendState('processing')
+    console.log(`[pipeline] Step 5: streamChunk intro`)
     this.streamChunk(`[system] 通过 ${mode === 'agent' ? 'Agent CLI' : 'AI'} 执行...`)
 
     // ─── .oh3/ memory judgment (agent mode only, before agent runs) ───
     // Sequential: DirectAI checks if user stated a rule/preference/fact,
     // writes it to .oh3/ if yes, THEN agent runs (and picks up the new rule
     // via formatRulesForPrompt in buildAgentPrompt).
+    console.log(`[pipeline] Step 6: loadConfig().enableOh3`)
     const oh3Enabled = loadConfig().enableOh3
     if (oh3Enabled && mode === 'agent' && this.agent && context.workingDirectory) {
       try {
+        console.log(`[pipeline] Step 6a: ensureInitialized(${context.workingDirectory})`)
         ensureInitialized(context.workingDirectory)
+        console.log(`[pipeline] Step 6b: directAI.judgeMemory`)
         const judgment = await this.directAI.judgeMemory(command)
         if (judgment) {
+          console.log(`[pipeline] Step 6c: appendRule`)
           const id = appendRule(context.workingDirectory, judgment.type, judgment.content, 'directai')
           if (id) {
             console.log(`[oh3] Wrote memory ${id} (${judgment.type}): ${judgment.content}`)
@@ -779,7 +789,7 @@ export class Orchestrator {
     if (this.aborted) return
 
     let result: ExecutionResult
-    console.log(`[pipeline] Executing via ${mode === 'agent' && this.agent ? 'agent CLI' : 'direct AI'}...`)
+    console.log(`[pipeline] Step 7: Executing via ${mode === 'agent' && this.agent ? 'agent CLI' : 'direct AI'}...`)
 
     if (mode === 'direct' || !this.agent) {
       this.fetchController = new AbortController()
@@ -1556,7 +1566,20 @@ export class Orchestrator {
   }
 
   private sendState(state: UIState, data?: string): void {
-    this.win.webContents.send('state-changed', state, data)
+    // Guard against destroyed window/webContents — without this, if the overlay
+    // renderer crashes mid-task, this throw would propagate up through the
+    // processVoice catch (which itself calls sendState), become an
+    // uncaughtException, and kill the main process. That looks exactly like
+    // the "莫名其妙退出" symptom — no error log, just "Terminate batch job".
+    if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) {
+      console.warn(`[sendState] Window/webContents destroyed — skipping ${state}`)
+      return
+    }
+    try {
+      this.win.webContents.send('state-changed', state, data)
+    } catch (err: any) {
+      console.warn(`[sendState] webContents.send failed (${state}): ${err?.message || err}`)
+    }
     if (state === 'hidden') {
       this.win.setIgnoreMouseEvents(true)
       this.win.hide()
@@ -1685,7 +1708,12 @@ export class Orchestrator {
   }
 
   private streamChunk(chunk: string): void {
-    this.win.webContents.send('stream-chunk', chunk)
+    if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return
+    try {
+      this.win.webContents.send('stream-chunk', chunk)
+    } catch (err: any) {
+      console.warn(`[streamChunk] failed: ${err?.message || err}`)
+    }
   }
 
   handlePermissionAnswer(id: string, approved: boolean): void {

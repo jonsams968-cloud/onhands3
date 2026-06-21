@@ -1,11 +1,33 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell, protocol, net, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import { MouseMonitor } from './input/MouseMonitor'
 import { Orchestrator } from './orchestrator/Orchestrator'
 import { loadConfig, saveConfig } from './config'
 import { TencentASR } from './stt/TencentASR'
 import { UpdateChecker } from './update/UpdateChecker'
 import { getStats as getOh3Stats, clearAll as clearOh3All } from './oh3/Oh3Store'
+
+// ─── Global crash diagnostics ────────────────────────────────────────────────
+// Without these handlers, any uncaughtException / unhandledRejection crashes
+// the Electron main process silently — the user sees "Terminate batch job" in
+// the launching terminal with no clue what went wrong. Write the error to a
+// log file so the next crash leaves evidence.
+function writeCrashLog(label: string, err: unknown): void {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const filePath = path.join(app?.getPath('userData') || process.cwd(), `crash-${label}-${ts}.log`)
+  const text = `[${label}] ${new Date().toISOString()}\n${err instanceof Error ? `${err.stack || err.message}` : String(err)}\n`
+  try { fs.writeFileSync(filePath, text, 'utf-8') } catch {}
+  // Also echo to stderr so it shows in the dev terminal
+  try { process.stderr.write(`\n[CRASH:${label}] ${text}\n`) } catch {}
+}
+
+process.on('uncaughtException', (err) => {
+  writeCrashLog('uncaught', err)
+})
+process.on('unhandledRejection', (reason) => {
+  writeCrashLog('rejection', reason)
+})
 
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
