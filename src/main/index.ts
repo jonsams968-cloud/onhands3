@@ -276,6 +276,24 @@ app.whenReady().then(async () => {
   mainWindow = createWindow()
   console.log('[main] Overlay window created')
 
+  // ─── Renderer / GPU / child-process crash listeners ─────────────────────
+  // These fire BEFORE a main-process native crash in many cases. Without them,
+  // a renderer crash looks identical to "莫名退出" — no log, just gone.
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    const msg = `[CRASH:renderer] reason=${details.reason}, exitCode=${details.exitCode}`
+    console.error(msg)
+    writeCrashLog('renderer', `${msg}\nevent=${JSON.stringify(event)}`)
+  })
+  mainWindow.on('unresponsive', () => {
+    console.error('[CRASH:unresponsive] Renderer became unresponsive')
+    writeCrashLog('unresponsive', 'Renderer became unresponsive')
+  })
+  app.on('child-process-gone', (event, details) => {
+    const msg = `[CRASH:child-process] type=${details.type}, reason=${details.reason}, exitCode=${details.exitCode || 'n/a'}, name=${details.name || 'n/a'}`
+    console.error(msg)
+    writeCrashLog('child-process', msg)
+  })
+
   // System tray
   tray = createTray()
 

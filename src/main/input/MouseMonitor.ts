@@ -52,6 +52,16 @@ export class MouseMonitor extends EventEmitter {
   /** Cursor shape captured at mouse-down time */
   private mouseDownIsIBeam = false
 
+  // ─── Pre-declared koffi function handles ───
+  // CRITICAL: koffi's .func() allocates native resources (FFI trampolines).
+  // Calling it inside checkIBeam() (which runs on every mouse-down) leaks
+  // native memory and can eventually corrupt the heap — suspected cause of
+  // v0.6.4 "莫名退出" crashes. Declare each Win32 function ONCE in start()
+  // and reuse the handle.
+  private fnGetAsyncKeyState: any = null
+  private fnGetCursorPos: any = null
+  private fnGetCursorInfo: any = null
+
   // ─── Click classification state ───
   private clickState: ClickClassifierState = { ...INITIAL_STATE }
   /** Windows double-click time window (ms), queried via GetDoubleClickTime() */
@@ -91,6 +101,13 @@ export class MouseMonitor extends EventEmitter {
 
     const getAsyncKeyState = this.user32.func('__stdcall', 'GetAsyncKeyState', 'short', ['int'])
     const getCursorPos = this.user32.func('__stdcall', 'GetCursorPos', 'int', ['void *'])
+    this.fnGetAsyncKeyState = getAsyncKeyState
+    this.fnGetCursorPos = getCursorPos
+    // Pre-declare GetCursorInfo too — previously this was redeclared inside
+    // checkIBeam() on every mouse-down, leaking native FFI trampolines.
+    try {
+      this.fnGetCursorInfo = this.user32.func('__stdcall', 'GetCursorInfo', 'int', ['void *'])
+    } catch {}
     const VK_LBUTTON = 0x01
 
     this.pollTimer = setInterval(() => {
@@ -111,9 +128,19 @@ export class MouseMonitor extends EventEmitter {
           this.onMouseMove(x, y)
         }
         this.wasMouseDown = isDown
-      } catch { /* poll errors are non-fatal */ }
+      } catch (err) {
+        // Don't silently swallow — log the first few poll errors so native
+        // crashes leave evidence instead of looking like "莫名退出".
+        this.pollErrorCount = (this.pollErrorCount || 0) + 1
+        if (this.pollErrorCount <= 3) {
+          console.warn(`[mouse] Poll error #${this.pollErrorCount}:`, err)
+        }
+      }
     }, 50)
   }
+
+  /** Error counter for throttling poll log spam */
+  private pollErrorCount = 0
 
   async stop(): Promise<void> {
     if (this.timer) { clearTimeout(this.timer); this.timer = null }
@@ -123,17 +150,21 @@ export class MouseMonitor extends EventEmitter {
 
   /** Check if current cursor is I-beam */
   private checkIBeam(): boolean {
-    if (!this.ibeamHandle || !this.user32) return false
+    if (!this.ibeamHandle || !this.user32 || !this.fnGetCursorInfo) return false
     try {
       const ci = Buffer.alloc(24)
       ci.writeUInt32LE(24, 0)
-      const getCursorInfo = this.user32.func('__stdcall', 'GetCursorInfo', 'int', ['void *'])
-      if (!getCursorInfo(ci)) return false
+      if (!this.fnGetCursorInfo(ci)) return false
       const flags = ci.readUInt32LE(4)
       if (!(flags & 0x0001)) return false  // CURSOR_SHOWING
       const hCursor = Number(ci.readBigUInt64LE(8))
       return hCursor === this.ibeamHandle
-    } catch { return false }
+    } catch (err) {
+      // If GetCursorInfo starts failing we want to know — silently returning
+      // false hides native issues that precede a crash.
+      console.warn('[mouse] checkIBeam failed:', err)
+      return false
+    }
   }
 
   private onMouseDown(x: number, y: number): void {
